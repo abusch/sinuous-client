@@ -14,3 +14,4 @@ tokio-tungstenite = { version = "0.28.0", features = [
   "rustls-tls-native-roots",
 ] }
 url = "2.5.7"
+iddqd = "0.3"

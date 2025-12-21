@@ -1,3 +1,4 @@
+use iddqd::{IdHashItem, id_upcast};
 use serde::Deserialize;
 use url::Url;
 
@@ -17,11 +18,11 @@ pub struct Groups {
     pub players: Vec<Player>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize)]
 #[serde(transparent)]
 pub struct GroupId(pub String);
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize)]
 #[serde(transparent)]
 pub struct PlayerId(String);
 
@@ -33,6 +34,16 @@ pub struct Group {
     pub coordinator_id: PlayerId,
     pub playback_state: Option<PlaybackState>,
     pub player_ids: Vec<PlayerId>,
+}
+
+impl IdHashItem for Group {
+    type Key<'a> = &'a GroupId;
+
+    fn key(&self) -> Self::Key<'_> {
+        &self.id
+    }
+
+    id_upcast!();
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -49,6 +60,16 @@ pub struct Player {
     pub device_ids: Vec<PlayerId>,
     pub devices: Vec<DeviceInfo>,
     // TODO: zone info?
+}
+
+impl IdHashItem for Player {
+    type Key<'a> = &'a PlayerId;
+
+    fn key(&self) -> Self::Key<'_> {
+        &self.id
+    }
+
+    id_upcast!();
 }
 
 #[derive(Debug, Clone, Deserialize)]
