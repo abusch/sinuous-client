@@ -134,6 +134,7 @@ pub enum Capability {
     /// The device can be controlled via Infra Red
     IrControl,
     Hdmi,
+    Svc,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
