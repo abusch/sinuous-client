@@ -1,12 +1,12 @@
 use std::sync::Arc;
 
 use anyhow::{Context, bail};
-use futures_util::{SinkExt, StreamExt, lock::Mutex, stream::SplitSink};
+use futures_util::{SinkExt, StreamExt, lock::Mutex};
 use iddqd::IdHashMap;
 use serde_json::{Value, json};
-use tokio::{net::TcpStream, sync::mpsc::UnboundedReceiver};
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio_tungstenite::{
-    Connector, MaybeTlsStream, WebSocketStream, connect_async_tls_with_config,
+    Connector, connect_async_tls_with_config,
     tungstenite::{ClientRequestBuilder, Message, http::Uri},
 };
 
@@ -26,8 +26,9 @@ pub struct Sonos {
     pub topology: Arc<Mutex<Topology>>,
     pub events_rx: UnboundedReceiver<SonosObject>,
     pub responses_rx: UnboundedReceiver<Result<SonosObject, SonosObject>>,
-    write: SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>,
-    jh: tokio::task::JoinHandle<()>,
+    pub write_tx: UnboundedSender<Message>,
+    writer_task: tokio::task::JoinHandle<()>,
+    reader_task: tokio::task::JoinHandle<()>,
 }
 
 impl Sonos {
@@ -45,11 +46,23 @@ impl Sonos {
             Some(Connector::Rustls(Arc::new(tls_config))),
         )
         .await?;
-        let (write, read) = ws_stream.split();
+        let (mut write, read) = ws_stream.split();
 
         let (events_tx, events_rx) = tokio::sync::mpsc::unbounded_channel();
         let (responses_tx, responses_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (write_tx, mut write_rx) = tokio::sync::mpsc::unbounded_channel();
 
+        // writer task
+        let writer_task = tokio::spawn(async move {
+            while let Some(msg) = write_rx.recv().await {
+                println!("Sending message");
+                write.send(msg).await.expect("Failed to send message");
+            }
+        });
+
+        // reader task
+
+        let write_tx2 = write_tx.clone();
         let jh = tokio::spawn(async move {
             read.for_each(|message| async {
                 match message {
@@ -74,8 +87,17 @@ impl Sonos {
                             println!("Failed to decode text message: {e:?}");
                         }
                     },
-                    Ok(_) => {
-                        eprintln!("Unsupported websocket message typte");
+                    Ok(Message::Ping(payload)) => {
+                        println!("Got ping, sending pong");
+                        write_tx2
+                            .send(Message::Pong(payload))
+                            .expect("Failed to send pong");
+                    }
+                    Ok(Message::Close(_)) => {
+                        println!("Connection is closing");
+                    }
+                    Ok(msg) => {
+                        eprintln!("Unsupported websocket message type: {:?}", msg);
                     }
                     Err(e) => {
                         eprintln!("Failed to read message: {e}");
@@ -89,8 +111,9 @@ impl Sonos {
             topology: Arc::new(Mutex::new(Topology::default())),
             events_rx,
             responses_rx,
-            write,
-            jh,
+            write_tx,
+            writer_task,
+            reader_task: jh,
         })
     }
 
@@ -100,23 +123,20 @@ impl Sonos {
                 "namespace": "groups",
                 "command": "getGroups",
                 "householdId": "Sonos_FVGVbNxG94Pbng2LLMm8zdSVuT.nErh-aF_Y_qPBGkAza3J",
-                "sessionId": null,
-                "cmdId": null
             },
             {
                 "name": "Sonos Test",
                 "appId": "com.test.sonos"
             }
         ]);
-        self.write
-            .send(Message::Text(json.to_string().into()))
-            .await?;
+        self.write_tx.send(Message::Text(json.to_string().into()))?;
         let resp = self.responses_rx.recv().await.unwrap();
         Ok(resp.unwrap())
     }
 
     pub async fn shutdown(self) {
-        self.jh.await.unwrap();
+        self.write_tx.send(Message::Close(None)).unwrap();
+        self.reader_task.await.unwrap();
     }
 }
 
