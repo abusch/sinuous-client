@@ -1,5 +1,5 @@
 use iddqd::{IdHashItem, id_upcast};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use url::Url;
 
 #[derive(Debug, Clone, Deserialize)]
@@ -18,11 +18,11 @@ pub struct Groups {
     pub players: Vec<Player>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct GroupId(pub String);
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct PlayerId(String);
 

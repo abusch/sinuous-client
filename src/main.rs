@@ -1,11 +1,7 @@
 use anyhow::bail;
 use rustls::crypto::CryptoProvider;
 
-use crate::{model::SonosObject, sonos::Sonos};
-
-mod conn;
-mod model;
-mod sonos;
+use sonos_ws::{model::SonosObject, sonos::Sonos};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -15,7 +11,8 @@ async fn main() -> anyhow::Result<()> {
 
     println!("Connection successful");
 
-    let SonosObject::Groups(groups) = sonos.get_groups().await? else {
+    let household_id = "Sonos_FVGVbNxG94Pbng2LLMm8zdSVuT.nErh-aF_Y_qPBGkAza3J";
+    let SonosObject::Groups(groups) = sonos.get_groups(household_id).await? else {
         bail!("Invalid response for get_groups");
     };
 
@@ -29,47 +26,11 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
-    // let json = json!([
-    //     {
-    //         "namespace": "playbackMetadata",
-    //         "command": "getMetadataStatus",
-    //         "groupId": groups.groups[0].id.0.clone(),
-    //         "sessionId": null,
-    //         "cmdId": null
-    //     },
-    //     {
-    //         "name": "Sonos Test",
-    //         "appId": "com.test.sonos"
-    //     }
-    // ]);
-    // write.send(Message::Text(json.to_string().into())).await?;
-    //
-    // let Some(SonosMsg(_prefix, SonosObject::MetadataStatus(meta))) = rx.recv().await else {
-    //     bail!("Didn't receive any response to playbackMetadata::getMetadataStatus");
-    // };
-    // println!(
-    //     "Playback metadata for group {}: {:#?}",
-    //     groups.groups[0].name, meta
-    // );
-    //
-    // while let Some(SonosMsg(
-    //     PrefixMessage {
-    //         namespace,
-    //         r#type: _,
-    //         payload,
-    //     },
-    //     sonos_object,
-    // )) = rx.recv().await
-    // {
-    //     match payload {
-    //         PrefixMessagePayload::Reply { response, success } => {
-    //             println!("Reply to {namespace}::{response} (success={success}): {sonos_object:#?}");
-    //         }
-    //         PrefixMessagePayload::Event { name } => {
-    //             println!("Event {namespace}::{name}: {sonos_object:#?}");
-    //         }
-    //     }
-    // }
+    let group = &groups.groups[0];
+    let SonosObject::MetadataStatus(status) = sonos.get_metadata_status(&group.id).await? else {
+        bail!("Invalid response for get_metadata_status");
+    };
+    println!("Playback metadata for group {}: {:#?}", group.name, status);
 
     sonos.shutdown().await;
     Ok(())

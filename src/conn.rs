@@ -14,7 +14,7 @@ use rustls::{
 };
 
 /// Return a `ClientConfig` suitable for connecting to Sonos speakers.
-pub fn tls_config() -> anyhow::Result<ClientConfig> {
+pub fn tls_config() -> Result<ClientConfig, rustls::Error> {
     let verifier = CustomVerifier::new()?;
     Ok(ClientConfig::builder()
         .dangerous()
@@ -37,7 +37,7 @@ pub struct CustomVerifier {
 impl CustomVerifier {
     const ROOT_CA_CERT: &[u8] = include_bytes!("../registered_ca_root.cer");
 
-    pub fn new() -> anyhow::Result<Self> {
+    pub fn new() -> Result<Self, rustls::Error> {
         let cert = CertificateDer::from_slice(Self::ROOT_CA_CERT);
         let mut root_store = RootCertStore::empty();
         root_store.add(cert)?;

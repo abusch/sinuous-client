@@ -1,18 +1,18 @@
 use std::sync::Arc;
 
-use anyhow::{Context, bail};
 use futures_util::{SinkExt, StreamExt, lock::Mutex};
 use iddqd::IdHashMap;
 use serde_json::{Value, json};
-use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use tokio_tungstenite::{
     Connector, connect_async_tls_with_config,
     tungstenite::{ClientRequestBuilder, Message, http::Uri},
 };
 
 use crate::{
+    Error,
     conn::tls_config,
-    model::{Group, Player, PrefixMessage, PrefixMessagePayload, SonosMsg, SonosObject},
+    model::{Group, GroupId, Player, PrefixMessage, PrefixMessagePayload, SonosMsg, SonosObject},
 };
 
 #[derive(Debug, Default)]
@@ -25,14 +25,14 @@ pub struct Topology {
 pub struct Sonos {
     pub topology: Arc<Mutex<Topology>>,
     pub events_rx: UnboundedReceiver<SonosObject>,
-    pub responses_rx: UnboundedReceiver<Result<SonosObject, SonosObject>>,
+    pub responses_rx: UnboundedReceiver<Result<SonosObject, Error>>,
     pub write_tx: UnboundedSender<Message>,
     writer_task: tokio::task::JoinHandle<()>,
     reader_task: tokio::task::JoinHandle<()>,
 }
 
 impl Sonos {
-    pub async fn connect(uri: Uri) -> anyhow::Result<Self> {
+    pub async fn connect(uri: Uri) -> Result<Self, Error> {
         let req = ClientRequestBuilder::new(uri)
             .with_header("X-Sonos-Api-Key", "12345678-abcd-1234-5678-123456789000")
             .with_sub_protocol("v1.api.smartspeaker.audio");
@@ -48,9 +48,9 @@ impl Sonos {
         .await?;
         let (mut write, read) = ws_stream.split();
 
-        let (events_tx, events_rx) = tokio::sync::mpsc::unbounded_channel();
-        let (responses_tx, responses_rx) = tokio::sync::mpsc::unbounded_channel();
-        let (write_tx, mut write_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (events_tx, events_rx) = mpsc::unbounded_channel();
+        let (responses_tx, responses_rx) = mpsc::unbounded_channel();
+        let (write_tx, mut write_rx) = mpsc::unbounded_channel();
 
         // writer task
         let writer_task = tokio::spawn(async move {
@@ -77,7 +77,9 @@ impl Sonos {
                                 response: _,
                                 success,
                             } => {
-                                let res = success.then_some(object.clone()).ok_or(object);
+                                let res = success
+                                    .then_some(object.clone())
+                                    .ok_or(Error::ApiResponse(Box::new(object)));
                                 if let Err(e) = responses_tx.send(res) {
                                     eprintln!("Failed to send response to channel: {e}");
                                 }
@@ -117,12 +119,12 @@ impl Sonos {
         })
     }
 
-    pub async fn get_groups(&mut self) -> anyhow::Result<SonosObject> {
+    pub async fn get_groups(&mut self, household_id: &str) -> Result<SonosObject, Error> {
         let json = json!([
             {
                 "namespace": "groups",
                 "command": "getGroups",
-                "householdId": "Sonos_FVGVbNxG94Pbng2LLMm8zdSVuT.nErh-aF_Y_qPBGkAza3J",
+                "householdId": household_id,
             },
             {
                 "name": "Sonos Test",
@@ -130,8 +132,31 @@ impl Sonos {
             }
         ]);
         self.write_tx.send(Message::Text(json.to_string().into()))?;
-        let resp = self.responses_rx.recv().await.unwrap();
-        Ok(resp.unwrap())
+
+        self.responses_rx
+            .recv()
+            .await
+            .ok_or(Error::ConnectionClosed)?
+    }
+
+    pub async fn get_metadata_status(&mut self, group_id: &GroupId) -> Result<SonosObject, Error> {
+        let json = json!([
+            {
+                "namespace": "playbackMetadata",
+                "command": "getMetadataStatus",
+                "groupId": group_id,
+            },
+            {
+                "name": "Sonos Test",
+                "appId": "com.test.sonos"
+            }
+        ]);
+        self.write_tx.send(Message::Text(json.to_string().into()))?;
+
+        self.responses_rx
+            .recv()
+            .await
+            .ok_or(Error::ConnectionClosed)?
     }
 
     pub async fn shutdown(self) {
@@ -140,18 +165,19 @@ impl Sonos {
     }
 }
 
-pub fn decode_message(payload: &[u8]) -> anyhow::Result<SonosMsg> {
-    let objects = serde_json::from_slice::<Vec<Value>>(payload).context("Expected an array")?;
+fn decode_message(payload: &[u8]) -> Result<SonosMsg, Error> {
+    let objects = serde_json::from_slice::<Vec<Value>>(payload)?;
 
     let Ok([prefix, msg]) = <[Value; 2]>::try_from(objects) else {
-        bail!("Expected an array with 2 elements");
+        return Err(Error::InvalidResponse(
+            "Expected an array with 2 elements".to_string(),
+        ));
     };
 
     let prefix_msg = serde_json::from_value::<PrefixMessage>(prefix)?;
     println!("{:?}", prefix_msg);
     println!("{msg}");
-    let sonos_object =
-        serde_json::from_value::<SonosObject>(msg).context("Object was not a sonos object...")?;
+    let sonos_object = serde_json::from_value::<SonosObject>(msg)?;
 
     Ok(SonosMsg(prefix_msg, sonos_object))
 }
