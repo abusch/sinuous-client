@@ -5,6 +5,9 @@ use sonos_ws::{model::SonosObject, sonos::Sonos};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::new("sonos_ws=debug"))
+        .init();
     CryptoProvider::install_default(rustls::crypto::aws_lc_rs::default_provider()).unwrap();
     let uri = "wss://10.0.1.52:1443/websocket/api".parse()?;
     let mut sonos = Sonos::connect(uri).await.unwrap();

@@ -8,6 +8,7 @@ use tokio_tungstenite::{
     Connector, connect_async_tls_with_config,
     tungstenite::{ClientRequestBuilder, Message, http::Uri},
 };
+use tracing::{debug, error, info, warn};
 
 use crate::{
     Error,
@@ -33,12 +34,12 @@ pub struct Sonos {
 
 impl Sonos {
     pub async fn connect(uri: Uri) -> Result<Self, Error> {
+        info!("Connecting to {uri}...");
         let req = ClientRequestBuilder::new(uri)
             .with_header("X-Sonos-Api-Key", "12345678-abcd-1234-5678-123456789000")
             .with_sub_protocol("v1.api.smartspeaker.audio");
 
         let tls_config = tls_config()?;
-        println!("Connecting...");
         let (ws_stream, _) = connect_async_tls_with_config(
             req,
             None,
@@ -55,13 +56,14 @@ impl Sonos {
         // writer task
         let writer_task = tokio::spawn(async move {
             while let Some(msg) = write_rx.recv().await {
-                println!("Sending message");
-                write.send(msg).await.expect("Failed to send message");
+                debug!("Sending message");
+                if let Err(e) = write.send(msg).await {
+                    error!("Failed to send message: {e}");
+                }
             }
         });
 
         // reader task
-
         let write_tx2 = write_tx.clone();
         let jh = tokio::spawn(async move {
             read.for_each(|message| async {
@@ -70,7 +72,7 @@ impl Sonos {
                         Ok(SonosMsg(PrefixMessage { payload, .. }, object)) => match payload {
                             PrefixMessagePayload::Event { name: _ } => {
                                 if let Err(e) = events_tx.send(object) {
-                                    eprintln!("Failed to send event to channel: {e}");
+                                    error!("Failed to send event to channel: {e}");
                                 }
                             }
                             PrefixMessagePayload::Reply {
@@ -81,28 +83,28 @@ impl Sonos {
                                     .then_some(object.clone())
                                     .ok_or(Error::ApiResponse(Box::new(object)));
                                 if let Err(e) = responses_tx.send(res) {
-                                    eprintln!("Failed to send response to channel: {e}");
+                                    error!("Failed to send response to channel: {e}");
                                 }
                             }
                         },
                         Err(e) => {
-                            println!("Failed to decode text message: {e:?}");
+                            error!("Failed to decode text message: {e:?}");
                         }
                     },
                     Ok(Message::Ping(payload)) => {
-                        println!("Got ping, sending pong");
+                        debug!("Got ping, sending pong");
                         write_tx2
                             .send(Message::Pong(payload))
                             .expect("Failed to send pong");
                     }
                     Ok(Message::Close(_)) => {
-                        println!("Connection is closing");
+                        info!("Connection is closing");
                     }
                     Ok(msg) => {
-                        eprintln!("Unsupported websocket message type: {:?}", msg);
+                        warn!("Unsupported websocket message type: {:?}", msg);
                     }
                     Err(e) => {
-                        eprintln!("Failed to read message: {e}");
+                        error!("Failed to read message: {e}");
                     }
                 }
             })
@@ -175,8 +177,8 @@ fn decode_message(payload: &[u8]) -> Result<SonosMsg, Error> {
     };
 
     let prefix_msg = serde_json::from_value::<PrefixMessage>(prefix)?;
-    println!("{:?}", prefix_msg);
-    println!("{msg}");
+    debug!("{:?}", prefix_msg);
+    debug!("{msg}");
     let sonos_object = serde_json::from_value::<SonosObject>(msg)?;
 
     Ok(SonosMsg(prefix_msg, sonos_object))
