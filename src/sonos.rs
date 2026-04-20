@@ -141,6 +141,26 @@ impl Sonos {
             .ok_or(Error::ConnectionClosed)?
     }
 
+    pub async fn get_playback_status(&mut self, group_id: &GroupId) -> Result<SonosObject, Error> {
+        let json = json!([
+            {
+                "namespace": "playback",
+                "command": "getPlaybackStatus",
+                "groupId": group_id,
+            },
+            {
+                "name": "Sonos Test",
+                "appId": "com.test.sonos"
+            }
+        ]);
+        self.write_tx.send(Message::Text(json.to_string().into()))?;
+
+        self.responses_rx
+            .recv()
+            .await
+            .ok_or(Error::ConnectionClosed)?
+    }
+
     pub async fn get_metadata_status(&mut self, group_id: &GroupId) -> Result<SonosObject, Error> {
         let json = json!([
             {
@@ -177,8 +197,8 @@ fn decode_message(payload: &[u8]) -> Result<SonosMsg, Error> {
     };
 
     let prefix_msg = serde_json::from_value::<PrefixMessage>(prefix)?;
-    debug!("{:?}", prefix_msg);
-    debug!("{msg}");
+    debug!("prefix: {:?}", prefix_msg);
+    debug!("message: {msg}");
     let sonos_object = serde_json::from_value::<SonosObject>(msg)?;
 
     Ok(SonosMsg(prefix_msg, sonos_object))

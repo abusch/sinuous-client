@@ -8,6 +8,7 @@ pub enum SonosObject {
     Groups(Groups),
     Group(Group),
     Player(Player),
+    PlaybackStatus(PlaybackStatus),
     MetadataStatus(MetadataStatus),
 }
 
@@ -161,38 +162,114 @@ pub struct SonosMsg(pub PrefixMessage, pub SonosObject);
 pub struct MetadataStatus {
     pub container: Option<Container>,
     pub current_item: Option<QueueItem>,
+    pub next_item: Option<QueueItem>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "_objectType", rename_all = "camelCase")]
 pub struct Container {
+    pub id: Option<UniversalMusicObjectId>,
     pub name: String,
-    pub r#type: String,
-    // pub id: String,
+    pub r#type: Option<String>,
+    pub service: Option<Service>,
+    pub image_url: Option<Url>,
+    #[serde(default)]
+    pub tags: Vec<Tags>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "_objectType", rename_all = "camelCase")]
 pub struct QueueItem {
+    pub id: Option<String>,
     pub track: Track,
+    #[serde(default)]
+    pub deleted: bool,
+    // TODO: policies
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "_objectType", rename_all = "camelCase")]
+pub struct UniversalMusicObjectId {
+    pub service_id: Option<String>,
+    pub object_id: String,
+    pub account_id: Option<String>,
+}
+
+fn true_bool() -> bool {
+    true
+}
+
+#[derive(Debug, Default, Clone, Copy, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TrackType {
+    #[default]
+    Track,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "_objectType", rename_all = "camelCase")]
+pub struct Service {
+    pub name: String,
+    pub id: Option<String>,
+    pub image_url: Option<Url>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "_objectType", rename_all = "camelCase")]
 pub struct Track {
-    pub name: String,
-    pub album: Album,
-    pub artist: Artist,
+    pub id: Option<UniversalMusicObjectId>,
+    #[serde(default)]
+    pub r#type: TrackType,
+    pub name: Option<String>,
+    pub image_url: Option<Url>,
+    pub album: Option<Album>,
+    pub artist: Option<Artist>,
+    #[serde(default = "true_bool")]
+    pub can_crossfade: bool,
+    #[serde(default = "true_bool")]
+    pub can_skip: bool,
+    pub duration_millis: Option<u64>,
+    pub replay_gain: Option<i64>,
+    pub service: Option<Service>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum Tags {
+    TagExplicit,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "_objectType", rename_all = "camelCase")]
 pub struct Album {
+    pub id: Option<UniversalMusicObjectId>,
     pub name: String,
+    pub artist: Option<Artist>,
+    pub image_url: Option<Url>,
+    #[serde(default)]
+    pub tags: Vec<Tags>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "_objectType", rename_all = "camelCase")]
 pub struct Artist {
+    pub id: Option<UniversalMusicObjectId>,
     pub name: String,
+    pub image_url: Option<Url>,
+    #[serde(default)]
+    pub tags: Vec<Tags>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "_objectType", rename_all = "camelCase")]
+pub struct PlaybackStatus {
+    pub playback_state: PlaybackState,
+    #[serde(default)]
+    pub is_ducking: bool,
+    pub queue_version: Option<String>,
+    pub item_id: Option<String>,
+    pub position_millis: Option<i32>,
+    pub previous_item_id: Option<String>,
+    pub previous_position_millis: Option<i32>,
+    // TODO: play modes, actions...
 }

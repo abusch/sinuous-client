@@ -30,6 +30,12 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let group = &groups.groups[0];
+
+    let SonosObject::PlaybackStatus(status) = sonos.get_playback_status(&group.id).await? else {
+        bail!("Invalid response for get_playback_status");
+    };
+    println!("Playback status for group {}: {:#?}", group.name, status);
+
     let SonosObject::MetadataStatus(status) = sonos.get_metadata_status(&group.id).await? else {
         bail!("Invalid response for get_metadata_status");
     };
