@@ -123,16 +123,14 @@ struct Inner {
     pending: Arc<Pending>,
     write_tx: mpsc::UnboundedSender<Message>,
     events_tx: broadcast::Sender<Event>,
-    reader_task: Mutex<Option<JoinHandle<()>>>,
+    reader_task: JoinHandle<()>,
     writer_task: JoinHandle<()>,
 }
 
 impl Drop for Inner {
     fn drop(&mut self) {
         self.writer_task.abort();
-        if let Some(reader) = lock(&self.reader_task).take() {
-            reader.abort();
-        }
+        self.reader_task.abort();
     }
 }
 
@@ -217,7 +215,7 @@ impl Connection {
                 pending,
                 write_tx,
                 events_tx,
-                reader_task: Mutex::new(Some(reader_task)),
+                reader_task,
                 writer_task,
             }),
         }
@@ -283,9 +281,9 @@ impl Connection {
     /// [`Error::ConnectionClosed`].
     pub async fn close(&self) {
         let _ = self.inner.write_tx.send(Message::Close(None));
-        let reader = lock(&self.inner.reader_task).take();
-        if let Some(reader) = reader
-            && tokio::time::timeout(CLOSE_TIMEOUT, reader).await.is_err()
+        if tokio::time::timeout(CLOSE_TIMEOUT, self.closed())
+            .await
+            .is_err()
         {
             warn!("Timed out waiting for the connection to close");
         }
