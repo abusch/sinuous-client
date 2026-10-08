@@ -15,7 +15,7 @@ use serde::{Serialize, de::DeserializeOwned, de::IgnoredAny};
 use serde_json::Value;
 use tokio::{
     net::TcpStream,
-    sync::{broadcast, mpsc, oneshot},
+    sync::{broadcast, mpsc, oneshot, watch},
     task::JoinHandle,
 };
 use tokio_tungstenite::{
@@ -229,7 +229,19 @@ impl Connection {
 
     /// Whether the websocket has been closed, by either side.
     pub fn is_closed(&self) -> bool {
-        lock(&self.inner.pending.0).is_none()
+        *self.inner.pending.closed.borrow()
+    }
+
+    /// Wait until the websocket is closed, by either side.
+    ///
+    /// The returned future doesn't keep the connection open: it also completes once the
+    /// connection (and all its clones) is dropped.
+    pub fn closed(&self) -> impl Future<Output = ()> + Send + 'static {
+        let mut closed = self.inner.pending.closed.subscribe();
+        async move {
+            // Fails only if the connection was dropped, which closes it too.
+            let _ = closed.wait_for(|closed| *closed).await;
+        }
     }
 
     /// Commands targeting the given group.
@@ -404,17 +416,24 @@ impl PlayerHandle {
     }
 }
 
-/// Commands awaiting a reply, keyed by `cmdId`. `None` once the connection is closed.
+/// Commands awaiting a reply, and whether the connection is closed.
 #[derive(Debug)]
-struct Pending(Mutex<Option<HashMap<String, Responder>>>);
+struct Pending {
+    /// Keyed by `cmdId`. `None` once the connection is closed.
+    responders: Mutex<Option<HashMap<String, Responder>>>,
+    closed: watch::Sender<bool>,
+}
 
 impl Pending {
     fn new() -> Self {
-        Self(Mutex::new(Some(HashMap::new())))
+        Self {
+            responders: Mutex::new(Some(HashMap::new())),
+            closed: watch::Sender::new(false),
+        }
     }
 
     fn insert(&self, cmd_id: String, responder: Responder) -> Result<(), Error> {
-        match lock(&self.0).as_mut() {
+        match lock(&self.responders).as_mut() {
             Some(map) => {
                 map.insert(cmd_id, responder);
                 Ok(())
@@ -424,12 +443,13 @@ impl Pending {
     }
 
     fn take(&self, cmd_id: &str) -> Option<Responder> {
-        lock(&self.0).as_mut()?.remove(cmd_id)
+        lock(&self.responders).as_mut()?.remove(cmd_id)
     }
 
     /// Mark the connection as closed. Dropping the responders wakes up all waiting commands.
     fn close(&self) {
-        lock(&self.0).take();
+        lock(&self.responders).take();
+        self.closed.send_replace(true);
     }
 }
 
@@ -598,7 +618,12 @@ mod tests {
         assert_eq!(a.unwrap().echo, 1);
         assert_eq!(b.unwrap().echo, 2);
         assert_eq!(c.unwrap().echo, 3);
-        assert!(lock(&conn.inner.pending.0).as_ref().unwrap().is_empty());
+        assert!(
+            lock(&conn.inner.pending.responders)
+                .as_ref()
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[tokio::test]
@@ -642,7 +667,12 @@ mod tests {
         let conn = connect(addr).await;
         let err = conn.get_groups().await.unwrap_err();
         assert!(matches!(err, Error::Timeout), "{err:?}");
-        assert!(lock(&conn.inner.pending.0).as_ref().unwrap().is_empty());
+        assert!(
+            lock(&conn.inner.pending.responders)
+                .as_ref()
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[tokio::test]
@@ -659,6 +689,30 @@ mod tests {
         // Later commands fail immediately.
         let result = conn.get_groups().await;
         assert!(matches!(result, Err(Error::ConnectionClosed)), "{result:?}");
+    }
+
+    #[tokio::test]
+    async fn notifies_when_the_connection_closes() {
+        let (addr, server) = fake_player(|_, _| None).await;
+        let conn = connect(addr).await;
+        let closed = conn.closed();
+        assert!(!conn.is_closed());
+        server.abort();
+        tokio::time::timeout(Duration::from_secs(1), closed)
+            .await
+            .expect("not notified");
+        assert!(conn.is_closed());
+        // Already closed: completes right away.
+        conn.closed().await;
+    }
+
+    #[tokio::test]
+    async fn notifies_when_the_connection_is_dropped() {
+        let (addr, _server) = fake_player(|_, _| None).await;
+        let closed = connect(addr).await.closed();
+        tokio::time::timeout(Duration::from_secs(1), closed)
+            .await
+            .expect("not notified");
     }
 
     #[tokio::test]
