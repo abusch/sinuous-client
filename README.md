@@ -18,6 +18,7 @@ websocket API the players expose. It's the library behind
 - Receive events, e.g. when playback or volume changes
 - Send each command to the player that accepts it: group commands only work on the group's
   coordinator, and player commands on the player itself
+- Reconnect to players when a connection is lost, and restore its event subscriptions
 
 ## Example
 

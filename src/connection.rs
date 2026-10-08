@@ -39,6 +39,8 @@ const EVENT_CHANNEL_CAPACITY: usize = 256;
 const CLOSE_TIMEOUT: Duration = Duration::from_secs(5);
 /// `cmdId` of the request used to learn the household ID. Regular commands start at 1.
 const HOUSEHOLD_CMD_ID: &str = "0";
+/// Identifies connections, e.g. to tell a new connection to a player from a lost one.
+static NEXT_CONNECTION_ID: AtomicU64 = AtomicU64::new(0);
 
 type WsStream = WebSocketStream<MaybeTlsStream<TcpStream>>;
 type Responder = oneshot::Sender<Result<Value, Error>>;
@@ -113,6 +115,7 @@ pub struct Connection {
 
 #[derive(Debug)]
 struct Inner {
+    id: u64,
     household_id: HouseholdId,
     websocket_url: Url,
     request_timeout: Duration,
@@ -206,6 +209,7 @@ impl Connection {
 
         Self {
             inner: Arc::new(Inner {
+                id: NEXT_CONNECTION_ID.fetch_add(1, Ordering::Relaxed),
                 household_id,
                 websocket_url,
                 request_timeout,
@@ -221,6 +225,11 @@ impl Connection {
 
     pub fn household_id(&self) -> &HouseholdId {
         &self.inner.household_id
+    }
+
+    /// Unique to this connection (and its clones) for the life of the process.
+    pub(crate) fn id(&self) -> u64 {
+        self.inner.id
     }
 
     pub fn websocket_url(&self) -> &Url {
