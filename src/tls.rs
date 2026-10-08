@@ -1,23 +1,29 @@
 use std::sync::Arc;
 
 use rustls::{
-    ClientConfig,
-    client::danger::{ServerCertVerified, ServerCertVerifier},
-    crypto::{
-        CryptoProvider, WebPkiSupportedAlgorithms, verify_tls12_signature, verify_tls13_signature,
+    CertificateError, ClientConfig, DigitallySignedStruct, RootCertStore, SignatureScheme,
+    client::{
+        WebPkiServerVerifier,
+        danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier},
     },
-    pki_types::CertificateDer,
+    crypto::CryptoProvider,
+    pki_types::{CertificateDer, ServerName, UnixTime},
 };
+
+use crate::error::BoxError;
+
+/// The root CA that signs the certificates presented by Sonos players.
+const SONOS_ROOT_CA: &[u8] = include_bytes!("../assets/registered_ca_root.cer");
 
 /// Return a `ClientConfig` suitable for connecting to Sonos speakers.
 ///
 /// Uses the process-wide default [`CryptoProvider`] if one is installed, and falls back to
 /// `aws-lc-rs` otherwise.
-pub fn tls_config() -> Result<ClientConfig, rustls::Error> {
+pub fn tls_config() -> Result<ClientConfig, BoxError> {
     let provider = CryptoProvider::get_default()
         .cloned()
         .unwrap_or_else(|| Arc::new(rustls::crypto::aws_lc_rs::default_provider()));
-    let verifier = CustomVerifier::new(&provider);
+    let verifier = SonosVerifier::new(provider.clone())?;
     Ok(ClientConfig::builder_with_provider(provider)
         .with_safe_default_protocol_versions()?
         .dangerous()
@@ -25,80 +31,70 @@ pub fn tls_config() -> Result<ClientConfig, rustls::Error> {
         .with_no_client_auth())
 }
 
-/// Custom server certificate verifier that only verifies against the Sonos certificate.
+/// Verifies that server certificates are issued by the Sonos root CA.
 ///
-/// It is pretty much copied from [`WebPkiServerVerifier`](https://docs.rs/rustls/latest/rustls/client/struct.WebPkiServerVerifier.html) with the following changes:
-/// * The root certificate store only contains the Sonos certificate
-/// * doesn't do revocation
-/// * Disable server name verification, so that we can connect using IP addresses.
+/// Players present certificates for names like `sonos-<id>.local`, which don't match the IP
+/// addresses we connect to, so the server name isn't checked. Everything else (chain, validity
+/// period, handshake signatures) is verified as usual.
 #[derive(Debug)]
-pub struct CustomVerifier {
-    // roots: Arc<RootCertStore>,
-    supported: WebPkiSupportedAlgorithms,
+struct SonosVerifier {
+    inner: Arc<WebPkiServerVerifier>,
 }
 
-impl CustomVerifier {
-    // const ROOT_CA_CERT: &[u8] = include_bytes!("../registered_ca_root.cer");
-
-    pub fn new(provider: &CryptoProvider) -> Self {
-        // let cert = CertificateDer::from_slice(Self::ROOT_CA_CERT);
-        // let mut root_store = RootCertStore::empty();
-        // root_store.add(cert)?;
-        Self {
-            // roots: Arc::new(root_store),
-            supported: provider.signature_verification_algorithms,
-        }
+impl SonosVerifier {
+    fn new(provider: Arc<CryptoProvider>) -> Result<Self, BoxError> {
+        let mut roots = RootCertStore::empty();
+        roots.add(CertificateDer::from_slice(SONOS_ROOT_CA))?;
+        let inner =
+            WebPkiServerVerifier::builder_with_provider(Arc::new(roots), provider).build()?;
+        Ok(Self { inner })
     }
 }
 
-impl ServerCertVerifier for CustomVerifier {
+impl ServerCertVerifier for SonosVerifier {
     fn verify_server_cert(
         &self,
-        _end_entity: &CertificateDer<'_>,
-        _intermediates: &[CertificateDer<'_>],
-        _server_name: &rustls::pki_types::ServerName<'_>,
+        end_entity: &CertificateDer<'_>,
+        intermediates: &[CertificateDer<'_>],
+        server_name: &ServerName<'_>,
         ocsp_response: &[u8],
-        _now: rustls::pki_types::UnixTime,
-    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
-        // let cert = ParsedCertificate::try_from(end_entity)?;
-        //
-        // // Note: we use the crate-internal `_impl` fn here in order to provide revocation
-        // // checking information, if applicable.
-        // verify_server_cert_signed_by_trust_anchor(
-        //     &cert,
-        //     &self.roots,
-        //     intermediates,
-        //     now,
-        //     self.supported.all,
-        // )?;
-
-        if !ocsp_response.is_empty() {
-            tracing::debug!("Unvalidated OCSP response: {:?}", ocsp_response);
+        now: UnixTime,
+    ) -> Result<ServerCertVerified, rustls::Error> {
+        // The name is only checked once the chain has been verified, so a name mismatch means the
+        // certificate is otherwise valid.
+        match self.inner.verify_server_cert(
+            end_entity,
+            intermediates,
+            server_name,
+            ocsp_response,
+            now,
+        ) {
+            Err(rustls::Error::InvalidCertificate(
+                CertificateError::NotValidForName | CertificateError::NotValidForNameContext { .. },
+            )) => Ok(ServerCertVerified::assertion()),
+            result => result,
         }
-
-        // verify_server_name(&cert, server_name)?;
-        Ok(ServerCertVerified::assertion())
     }
 
     fn verify_tls12_signature(
         &self,
         message: &[u8],
         cert: &CertificateDer<'_>,
-        dss: &rustls::DigitallySignedStruct,
-    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
-        verify_tls12_signature(message, cert, dss, &self.supported)
+        dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        self.inner.verify_tls12_signature(message, cert, dss)
     }
 
     fn verify_tls13_signature(
         &self,
         message: &[u8],
         cert: &CertificateDer<'_>,
-        dss: &rustls::DigitallySignedStruct,
-    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
-        verify_tls13_signature(message, cert, dss, &self.supported)
+        dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        self.inner.verify_tls13_signature(message, cert, dss)
     }
 
-    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
-        self.supported.supported_schemes()
+    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+        self.inner.supported_verify_schemes()
     }
 }
