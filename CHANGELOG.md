@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.1.0](https://github.com/abusch/sinuous-client/releases/tag/v0.1.0) - 2026-10-08
 
 Initial release.
 
@@ -21,5 +21,3 @@ Initial release.
 - TLS connections that verify player certificates against the Sonos root CA. The crypto
   provider is left to the application: install a process-wide default `CryptoProvider`, or enable
   exactly one of rustls' `aws_lc_rs` and `ring` features.
-
-[Unreleased]: https://github.com/abusch/sinuous-client/commits/main
