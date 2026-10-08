@@ -1,3 +1,14 @@
+//! Show the state of a household: players, groups, volumes, what's playing, favorites and
+//! playlists, then print events from all groups for a few seconds.
+//!
+//! Only reads state, it doesn't change anything.
+//!
+//! ```sh
+//! cargo run --example household              # discover players with SSDP
+//! cargo run --example household 10.0.0.42    # or connect to a known player
+//! RUST_LOG=sonos_ws=debug cargo run --example household
+//! ```
+
 use std::time::Duration;
 
 use sonos_ws::{EventPayload, Household, Subscription};

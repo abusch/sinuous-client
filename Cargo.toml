@@ -4,7 +4,6 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-anyhow = "1.0.100"
 futures-util = "0.3.31"
 iddqd = "0.5"
 rustls = { version = "0.23" }
@@ -19,5 +18,8 @@ tokio-tungstenite = {
   ]
 }
 tracing = "0.1.44"
-tracing-subscriber = { version = " 0.3.22", features = ["env-filter"] }
 url = { version = "2.5.7", features = ["serde"] }
+
+[dev-dependencies]
+anyhow = "1.0.100"
+tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
