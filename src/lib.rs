@@ -1,28 +1,36 @@
-use tokio::sync::mpsc::error::SendError;
-use tokio_tungstenite::tungstenite;
+//! Local control of Sonos players over their websocket API.
+//!
+//! The protocol mirrors the [Sonos Control API](https://docs.sonos.com/docs/control) (namespaces,
+//! commands and objects), but is spoken directly to players on the local network:
+//!
+//! ```no_run
+//! # async fn example() -> Result<(), sonos_ws::Error> {
+//! let conn = sonos_ws::Connection::connect("10.10.190.82").await?;
+//! let groups = conn.get_groups().await?;
+//! let group = conn.group(&groups.groups[0].id);
+//! group.set_volume(20).await?;
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! Unlike the cloud API, group- and player-scoped commands must be sent to the player that
+//! coordinates the group (see [`Error::GroupCoordinatorChanged`]).
 
-use crate::model::SonosObject;
+mod connection;
+mod error;
+pub mod events;
+pub mod favorites;
+pub mod groups;
+pub mod home_theater;
+mod ids;
+pub mod playback;
+pub mod playback_metadata;
+pub mod playlists;
+mod protocol;
+mod tls;
+pub mod volume;
 
-pub mod conn;
-pub mod model;
-pub mod sonos;
-
-#[derive(Debug, thiserror::Error)]
-pub enum Error {
-    #[error(transparent)]
-    Rustls(#[from] rustls::Error),
-    #[error(transparent)]
-    Websocket(#[from] tungstenite::Error),
-    #[error("Unexpected object type")]
-    UnexpectedObjectType,
-    #[error("Connection is closed")]
-    ConnectionClosed,
-    #[error("Sonos command returned an error")]
-    ApiResponse(Box<SonosObject>),
-    #[error("Invalid response: {0}")]
-    InvalidResponse(String),
-    #[error("Error sending websocket message")]
-    Send(#[from] SendError<tungstenite::Message>),
-    #[error(transparent)]
-    Serde(#[from] serde_json::Error),
-}
+pub use connection::{ConnectOptions, Connection, DEFAULT_API_KEY, GroupHandle, PlayerHandle};
+pub use error::{ApiError, Error};
+pub use events::{Event, EventPayload, Subscription};
+pub use ids::{FavoriteId, GroupId, HouseholdId, PlayerId, PlaylistId};

@@ -10,9 +10,16 @@ use rustls::{
 };
 
 /// Return a `ClientConfig` suitable for connecting to Sonos speakers.
+///
+/// Uses the process-wide default [`CryptoProvider`] if one is installed, and falls back to
+/// `aws-lc-rs` otherwise.
 pub fn tls_config() -> Result<ClientConfig, rustls::Error> {
-    let verifier = CustomVerifier::new()?;
-    Ok(ClientConfig::builder()
+    let provider = CryptoProvider::get_default()
+        .cloned()
+        .unwrap_or_else(|| Arc::new(rustls::crypto::aws_lc_rs::default_provider()));
+    let verifier = CustomVerifier::new(&provider);
+    Ok(ClientConfig::builder_with_provider(provider)
+        .with_safe_default_protocol_versions()?
         .dangerous()
         .with_custom_certificate_verifier(Arc::new(verifier))
         .with_no_client_auth())
@@ -33,15 +40,14 @@ pub struct CustomVerifier {
 impl CustomVerifier {
     // const ROOT_CA_CERT: &[u8] = include_bytes!("../registered_ca_root.cer");
 
-    pub fn new() -> Result<Self, rustls::Error> {
+    pub fn new(provider: &CryptoProvider) -> Self {
         // let cert = CertificateDer::from_slice(Self::ROOT_CA_CERT);
         // let mut root_store = RootCertStore::empty();
         // root_store.add(cert)?;
-        let provider = CryptoProvider::get_default().unwrap();
-        Ok(Self {
+        Self {
             // roots: Arc::new(root_store),
             supported: provider.signature_verification_algorithms,
-        })
+        }
     }
 }
 
@@ -67,7 +73,7 @@ impl ServerCertVerifier for CustomVerifier {
         // )?;
 
         if !ocsp_response.is_empty() {
-            eprintln!("Unvalidated OCSP response: {:?}", ocsp_response.to_vec());
+            tracing::debug!("Unvalidated OCSP response: {:?}", ocsp_response);
         }
 
         // verify_server_name(&cert, server_name)?;
