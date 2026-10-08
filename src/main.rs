@@ -1,4 +1,5 @@
 use anyhow::bail;
+use iddqd::IdHashMap;
 use rustls::crypto::CryptoProvider;
 
 use sonos_ws::{model::SonosObject, sonos::Sonos};
@@ -9,7 +10,7 @@ async fn main() -> anyhow::Result<()> {
         .with_env_filter(tracing_subscriber::EnvFilter::new("sonos_ws=debug"))
         .init();
     CryptoProvider::install_default(rustls::crypto::aws_lc_rs::default_provider()).unwrap();
-    let uri = "wss://10.0.1.52:1443/websocket/api".parse()?;
+    let uri = "wss://10.10.190.82:1443/websocket/api".parse()?;
     let mut sonos = Sonos::connect(uri).await.unwrap();
 
     println!("Connection successful");
@@ -19,17 +20,34 @@ async fn main() -> anyhow::Result<()> {
         bail!("Invalid response for get_groups");
     };
 
-    for g in &groups.groups {
-        println!("Found group {} ({:?})", g.name, g.playback_state);
+    let mut group_map = IdHashMap::new();
+    let mut player_map = IdHashMap::new();
+    for g in groups.groups {
+        group_map.insert_unique(g).expect("Duplicate group!");
     }
-    for p in &groups.players {
+    for p in groups.players {
+        player_map.insert_unique(p).expect("Duplicate player!");
+    }
+
+    for g in &group_map {
+        let coordinator = &g.coordinator_id;
+        let Some(coord_player) = player_map.get(coordinator) else {
+            println!("Missing coordinator!");
+            continue;
+        };
+        println!(
+            "Found group {} ({:?}), coordinator = {}",
+            g.name, g.playback_state, coord_player.name
+        );
+    }
+    for p in &player_map {
         println!("Found player {}", p.name);
         for d in &p.devices {
             println!("\tDevice {} ({})", d.name, d.model_display_name);
         }
     }
 
-    let group = &groups.groups[0];
+    let group = &group_map.iter().next().unwrap();
 
     let SonosObject::PlaybackStatus(status) = sonos.get_playback_status(&group.id).await? else {
         bail!("Invalid response for get_playback_status");
