@@ -1,0 +1,28 @@
+[workspace]
+# Only release when a release PR is merged, so each release gets reviewed along with
+# cargo-semver-checks' report, which release-plz runs for libraries by default.
+release_always = false
+
+# Release-plz generates the changelog with git-cliff, from conventional commits. The header and
+# release template are release-plz's defaults (Keep a Changelog).
+[changelog]
+# Keep breaking changes even when their type is skipped below, e.g. a breaking `refactor`.
+protect_breaking_commits = true
+# Parsers run in order and the first match wins. Sections are sorted by name.
+commit_parsers = [
+  { message = "^feat", group = "added" },
+  { message = "^fix", group = "fixed" },
+  # Breaking changes of the types skipped below, e.g. `refactor!: ...`. (A `field = "breaking"`
+  # parser would drop the commits that aren't conventional.)
+  { message = "^[a-z]+(\\([^)]*\\))?!:", group = "changed" },
+  { footer = "^BREAKING[- ]CHANGE", group = "changed" },
+  { message = "^perf", group = "changed" },
+  { message = "^revert", group = "changed" },
+  # Dependabot's crate bumps (see dependabot.yml): they matter to users, e.g. a new rustls
+  # version, as applications install the rustls crypto provider.
+  { message = "^chore\\(deps\\)", group = "dependencies" },
+  { message = "^(build|chore|ci|docs|refactor|style|test)", skip = true },
+  { message = "^Merge (pull request|branch)", skip = true },
+  # Anything else, e.g. commits that aren't conventional.
+  { message = ".*", group = "other" },
+]
