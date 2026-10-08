@@ -1,12 +1,11 @@
 //! The `favorites` namespace.
 
 use serde::{Deserialize, Serialize};
-use url::Url;
 
 use crate::{
     Connection, Error, FavoriteId, GroupHandle,
     playback::LoadOptions,
-    playback_metadata::{Service, UniversalMusicObjectId},
+    playback_metadata::{ImageUrl, Service, UniversalMusicObjectId},
     protocol::NoParams,
 };
 
@@ -68,7 +67,7 @@ pub struct Favorite {
     pub id: FavoriteId,
     pub name: String,
     pub description: Option<String>,
-    pub image_url: Option<Url>,
+    pub image_url: Option<ImageUrl>,
     pub service: Option<Service>,
     pub resource: Option<FavoriteResource>,
 }
