@@ -79,6 +79,9 @@ struct Inner {
     topology: Arc<watch::Sender<Topology>>,
     /// Connections to players, keyed by websocket URL.
     connections: std::sync::Mutex<HashMap<Url, Arc<ConnectionSlot>>>,
+    /// Subscriptions made through the household, with the websocket URL of the player they were
+    /// sent to.
+    subscriptions: std::sync::Mutex<HashMap<Subscription, Url>>,
     events_tx: broadcast::Sender<Event>,
 }
 
@@ -104,6 +107,7 @@ impl Household {
         topology.send_modify(|topology| topology.update(groups));
         // Keep the topology up to date.
         conn.subscribe(&Subscription::Groups).await?;
+        let subscriptions = HashMap::from([(Subscription::Groups, conn.websocket_url().clone())]);
 
         let connections = HashMap::from([(
             conn.websocket_url().clone(),
@@ -115,6 +119,7 @@ impl Household {
                 options,
                 topology,
                 connections: std::sync::Mutex::new(connections),
+                subscriptions: std::sync::Mutex::new(subscriptions),
                 events_tx,
             }),
         })
@@ -197,19 +202,35 @@ impl Household {
 
     /// Subscribe to events, sending the subscription to the right player.
     ///
-    /// Events are delivered to [`Household::events`].
+    /// Events are delivered to [`Household::events`]. The household subscribes to
+    /// [`Subscription::Groups`] itself, to keep the topology up to date.
     pub async fn subscribe(&self, subscription: &Subscription) -> Result<(), Error> {
-        self.connection_for(subscription)
-            .await?
-            .subscribe(subscription)
-            .await
+        let conn = self.connection_for(subscription).await?;
+        conn.subscribe(subscription).await?;
+        lock(&self.inner.subscriptions).insert(subscription.clone(), conn.websocket_url().clone());
+        Ok(())
     }
 
+    /// Stop receiving events for a subscription.
+    ///
+    /// The subscription is forgotten even if the command fails.
     pub async fn unsubscribe(&self, subscription: &Subscription) -> Result<(), Error> {
-        self.connection_for(subscription)
-            .await?
-            .unsubscribe(subscription)
-            .await
+        let url = lock(&self.inner.subscriptions).remove(subscription);
+        let conn = match url {
+            // A closed connection has no subscriptions left, so there is nothing to undo.
+            Some(url) => match self.open_connection(&url).await {
+                Some(conn) => conn,
+                None => return Ok(()),
+            },
+            // Not made through the household (or not anymore): send it where it would have been.
+            None => self.connection_for(subscription).await?,
+        };
+        conn.unsubscribe(subscription).await
+    }
+
+    /// The active subscriptions, including [`Subscription::Groups`].
+    pub fn subscriptions(&self) -> Vec<Subscription> {
+        lock(&self.inner.subscriptions).keys().cloned().collect()
     }
 
     /// Close all connections.
@@ -258,6 +279,13 @@ impl Household {
             }
         };
         self.connection_to(&url).await
+    }
+
+    /// The open connection to `url`, if any.
+    async fn open_connection(&self, url: &Url) -> Option<Connection> {
+        let slot = lock(&self.inner.connections).get(url)?.clone();
+        let conn = slot.lock().await;
+        conn.as_ref().filter(|conn| !conn.is_closed()).cloned()
     }
 
     /// Get the open connection to `url`, or open one.
@@ -584,6 +612,54 @@ mod tests {
         .unwrap();
         assert_eq!(event.group_id, Some(GroupId::new("B:1")));
         assert!(matches!(event.payload, EventPayload::GroupVolume(v) if v.volume == 10));
+    }
+
+    #[tokio::test]
+    async fn tracks_subscriptions() {
+        let (household, log_a, log_b) = household().await;
+        assert_eq!(household.subscriptions(), [Subscription::Groups]);
+        let volume = Subscription::GroupVolume(GroupId::new("B:1"));
+        household.subscribe(&volume).await.unwrap();
+        household.subscribe(&Subscription::Favorites).await.unwrap();
+        let mut subscriptions = household.subscriptions();
+        subscriptions.sort_by_key(|s| format!("{s:?}"));
+        assert_eq!(
+            subscriptions,
+            [
+                Subscription::Favorites,
+                volume.clone(),
+                Subscription::Groups
+            ]
+        );
+
+        household.unsubscribe(&volume).await.unwrap();
+        household
+            .unsubscribe(&Subscription::Favorites)
+            .await
+            .unwrap();
+        assert_eq!(household.subscriptions(), [Subscription::Groups]);
+        assert_eq!(
+            logged(&log_b),
+            ["groupVolume:subscribe:B:1", "groupVolume:unsubscribe:B:1"]
+        );
+        assert_eq!(
+            logged(&log_a)[2..],
+            [
+                "favorites:subscribe:Sonos_1",
+                "favorites:unsubscribe:Sonos_1"
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn does_not_track_failed_subscriptions() {
+        let (household, _, _) = household().await;
+        let err = household
+            .subscribe(&Subscription::Playback(GroupId::new("C:1")))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, Error::UnknownGroup(_)), "{err:?}");
+        assert_eq!(household.subscriptions(), [Subscription::Groups]);
     }
 
     #[tokio::test]
