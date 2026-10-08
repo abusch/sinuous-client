@@ -1,0 +1,4 @@
+[workspace]
+# Only release when a release PR is merged, so each release gets reviewed along with
+# cargo-semver-checks' report, which release-plz runs for libraries by default.
+release_always = false
