@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use rustls::{
     CertificateError, ClientConfig, DigitallySignedStruct, RootCertStore, SignatureScheme,
@@ -17,9 +17,20 @@ const SONOS_ROOT_CA: &[u8] = include_bytes!("../assets/registered_ca_root.cer");
 
 /// Return a `ClientConfig` suitable for connecting to Sonos speakers.
 ///
-/// Uses the process-wide default [`CryptoProvider`] if one is installed, and falls back to
-/// `aws-lc-rs` otherwise.
-pub fn tls_config() -> Result<ClientConfig, BoxError> {
+/// The config is built on first use and shared by all connections, so they share its TLS session
+/// cache. It uses the process-wide default [`CryptoProvider`] if one is installed at that point,
+/// and falls back to `aws-lc-rs` otherwise.
+pub fn tls_config() -> Result<Arc<ClientConfig>, BoxError> {
+    static CONFIG: OnceLock<Arc<ClientConfig>> = OnceLock::new();
+
+    if let Some(config) = CONFIG.get() {
+        return Ok(config.clone());
+    }
+    let config = Arc::new(build_tls_config()?);
+    Ok(CONFIG.get_or_init(|| config).clone())
+}
+
+fn build_tls_config() -> Result<ClientConfig, BoxError> {
     let provider = CryptoProvider::get_default()
         .cloned()
         .unwrap_or_else(|| Arc::new(rustls::crypto::aws_lc_rs::default_provider()));

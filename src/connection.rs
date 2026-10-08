@@ -153,14 +153,10 @@ impl Connection {
             .with_header("X-Sonos-Api-Key", options.api_key.clone())
             .with_sub_protocol(SUB_PROTOCOL);
         let tls = tls_config().map_err(Error::Connect)?;
-        let (mut ws, _) = connect_async_tls_with_config(
-            request,
-            None,
-            false,
-            Some(Connector::Rustls(Arc::new(tls))),
-        )
-        .await
-        .map_err(|e| Error::Connect(Box::new(e)))?;
+        let (mut ws, _) =
+            connect_async_tls_with_config(request, None, false, Some(Connector::Rustls(tls)))
+                .await
+                .map_err(|e| Error::Connect(Box::new(e)))?;
 
         let household_id = match options.household_id {
             Some(household_id) => household_id,
