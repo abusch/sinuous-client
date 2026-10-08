@@ -15,11 +15,19 @@
 //! ```
 
 use std::{
+    future::Future,
     net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4},
+    pin::Pin,
+    task::{Context, Poll, ready},
     time::Duration,
 };
 
-use tokio::{net::UdpSocket, time::Instant};
+use futures_util::{Stream, StreamExt};
+use tokio::{
+    io::ReadBuf,
+    net::UdpSocket,
+    time::{Sleep, sleep},
+};
 use tracing::debug;
 use url::Url;
 
@@ -31,7 +39,7 @@ const SEARCH_TARGET: &str = "urn:smartspeaker-audio:service:SpeakerGroup:1";
 /// UDP is unreliable, so send the search more than once.
 const SEARCH_ATTEMPTS: usize = 2;
 
-/// A player found by [`discover`].
+/// A player found by [`discover`] or [`discover_stream`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct DiscoveredPlayer {
@@ -72,61 +80,112 @@ impl DiscoveredPlayer {
 /// [`DiscoveredPlayer::household_id`] if that matters. Discovery uses IPv4 multicast on the
 /// default interface, so it won't find players across VLANs or from inside most containers; use
 /// [`Connection::connect`] with an address in that case.
+///
+/// Use [`discover_stream`] instead to use players as soon as they answer.
 pub async fn discover(timeout: Duration) -> Result<Vec<DiscoveredPlayer>, Error> {
-    discover_at(SSDP_ADDR, timeout).await
+    Ok(discover_stream(timeout).await?.collect().await)
 }
 
-async fn discover_at(
-    target: SocketAddr,
-    timeout: Duration,
-) -> Result<Vec<DiscoveredPlayer>, Error> {
-    let deadline = Instant::now() + timeout;
-    let socket = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0))
-        .await
-        .map_err(|e| Error::Discovery(e.into()))?;
-    let search = format!(
-        "M-SEARCH * HTTP/1.1\r\n\
-         HOST: {target}\r\n\
-         MAN: \"ssdp:discover\"\r\n\
-         MX: 1\r\n\
-         ST: {SEARCH_TARGET}\r\n\
-         \r\n"
-    );
-    for _ in 0..SEARCH_ATTEMPTS {
-        socket
-            .send_to(search.as_bytes(), target)
+/// Search the local network for players, yielding them as they answer, until `timeout`.
+///
+/// Players usually answer within a few hundred milliseconds, so this allows connecting to one
+/// without waiting for the whole timeout. The same caveats as for [`discover`] apply.
+///
+/// ```no_run
+/// # use std::time::Duration;
+/// use futures_util::StreamExt;
+///
+/// # async fn example() -> Result<(), sinuous_client::Error> {
+/// let mut players = sinuous_client::discover_stream(Duration::from_secs(2)).await?;
+/// if let Some(player) = players.next().await {
+///     let conn = player.connect().await?;
+/// }
+/// # Ok(())
+/// # }
+/// ```
+pub async fn discover_stream(timeout: Duration) -> Result<Discovery, Error> {
+    Discovery::start(SSDP_ADDR, timeout).await
+}
+
+/// The players answering a search started by [`discover_stream`].
+///
+/// Each player is yielded once, even though players answer every search sent. The stream ends
+/// once the timeout has elapsed.
+#[derive(Debug)]
+pub struct Discovery {
+    socket: UdpSocket,
+    deadline: Pin<Box<Sleep>>,
+    seen: Vec<PlayerId>,
+    buf: Box<[u8]>,
+}
+
+impl Discovery {
+    async fn start(target: SocketAddr, timeout: Duration) -> Result<Self, Error> {
+        let deadline = Box::pin(sleep(timeout));
+        let socket = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0))
             .await
             .map_err(|e| Error::Discovery(e.into()))?;
+        let search = format!(
+            "M-SEARCH * HTTP/1.1\r\n\
+             HOST: {target}\r\n\
+             MAN: \"ssdp:discover\"\r\n\
+             MX: 1\r\n\
+             ST: {SEARCH_TARGET}\r\n\
+             \r\n"
+        );
+        for _ in 0..SEARCH_ATTEMPTS {
+            socket
+                .send_to(search.as_bytes(), target)
+                .await
+                .map_err(|e| Error::Discovery(e.into()))?;
+        }
+        Ok(Self {
+            socket,
+            deadline,
+            seen: Vec::new(),
+            buf: vec![0; 2048].into_boxed_slice(),
+        })
     }
+}
 
-    let mut players: Vec<DiscoveredPlayer> = Vec::new();
-    let mut buf = [0; 2048];
-    while let Ok(received) = tokio::time::timeout_at(deadline, socket.recv_from(&mut buf)).await {
-        let (len, from) = match received {
-            Ok(received) => received,
-            Err(e) => {
-                // e.g. ICMP port unreachable on some platforms; other answers may still come.
-                debug!("Error receiving SSDP response: {e}");
+impl Stream for Discovery {
+    type Item = DiscoveredPlayer;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let this = self.get_mut();
+        loop {
+            if this.deadline.as_mut().poll(cx).is_ready() {
+                return Poll::Ready(None);
+            }
+            let mut buf = ReadBuf::new(&mut this.buf);
+            let from = match ready!(this.socket.poll_recv_from(cx, &mut buf)) {
+                Ok(from) => from,
+                Err(e) => {
+                    // e.g. ICMP port unreachable on some platforms; other answers may still come.
+                    debug!("Error receiving SSDP response: {e}");
+                    continue;
+                }
+            };
+            let data = buf.filled();
+            let Some(player) = parse_response(data, from.ip()) else {
+                debug!(
+                    "Ignoring SSDP response from {from}: {:?}",
+                    String::from_utf8_lossy(data)
+                );
+                continue;
+            };
+            // Each player answers every search we sent.
+            if this.seen.contains(&player.player_id) {
                 continue;
             }
-        };
-        let Some(player) = parse_response(&buf[..len], from.ip()) else {
-            debug!(
-                "Ignoring SSDP response from {from}: {:?}",
-                String::from_utf8_lossy(&buf[..len])
-            );
-            continue;
-        };
-        // Each player answers every search we sent.
-        if !players.iter().any(|p| p.player_id == player.player_id) {
             debug!(
                 "Discovered {} at {}",
                 player.player_id, player.websocket_url
             );
-            players.push(player);
+            this.seen.push(player.player_id.clone());
+            return Poll::Ready(Some(player));
         }
     }
-    Ok(players)
 }
 
 fn parse_response(data: &[u8], address: IpAddr) -> Option<DiscoveredPlayer> {
@@ -282,8 +341,8 @@ mod tests {
         assert_eq!(parse_group_info("gc=1; gname=\"No id\""), None);
     }
 
-    #[tokio::test]
-    async fn collects_unique_players_until_timeout() {
+    /// Answer searches like a player would, with some garbage first. Returns where to send them.
+    async fn fake_player() -> SocketAddr {
         let fake_player = UdpSocket::bind("127.0.0.1:0").await.unwrap();
         let target = fake_player.local_addr().unwrap();
         tokio::spawn(async move {
@@ -303,10 +362,17 @@ mod tests {
                     .unwrap();
             }
         });
+        target
+    }
 
-        let players = discover_at(target, Duration::from_millis(300))
+    #[tokio::test]
+    async fn collects_unique_players_until_timeout() {
+        let target = fake_player().await;
+        let players: Vec<_> = Discovery::start(target, Duration::from_millis(300))
             .await
-            .unwrap();
+            .unwrap()
+            .collect()
+            .await;
         // The player answered every attempt, but is only reported once.
         assert_eq!(players.len(), 1);
         assert_eq!(
@@ -314,5 +380,18 @@ mod tests {
             PlayerId::new("RINCON_5CAAFDD347CA01400")
         );
         assert_eq!(players[0].address, IpAddr::from(Ipv4Addr::LOCALHOST));
+    }
+
+    #[tokio::test]
+    async fn yields_players_before_the_timeout() {
+        let target = fake_player().await;
+        let mut players = Discovery::start(target, Duration::from_secs(10))
+            .await
+            .unwrap();
+        let player = tokio::time::timeout(Duration::from_secs(1), players.next())
+            .await
+            .expect("no player before the timeout")
+            .unwrap();
+        assert_eq!(player.player_id, PlayerId::new("RINCON_5CAAFDD347CA01400"));
     }
 }

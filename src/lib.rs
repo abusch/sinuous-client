@@ -66,7 +66,7 @@ mod tls;
 pub mod volume;
 
 pub use connection::{ConnectOptions, Connection, DEFAULT_API_KEY, GroupHandle, PlayerHandle};
-pub use discovery::{DiscoveredGroup, DiscoveredPlayer, discover};
+pub use discovery::{DiscoveredGroup, DiscoveredPlayer, Discovery, discover, discover_stream};
 pub use error::{ApiError, Error};
 pub use events::{Event, EventPayload, Subscription};
 pub use household::{Household, Topology};
