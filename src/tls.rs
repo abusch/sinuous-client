@@ -6,7 +6,6 @@ use rustls::{
         WebPkiServerVerifier,
         danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier},
     },
-    crypto::CryptoProvider,
     pki_types::{CertificateDer, ServerName, UnixTime},
 };
 
@@ -18,8 +17,15 @@ const SONOS_ROOT_CA: &[u8] = include_bytes!("../assets/registered_ca_root.cer");
 /// Return a `ClientConfig` suitable for connecting to Sonos speakers.
 ///
 /// The config is built on first use and shared by all connections, so they share its TLS session
-/// cache. It uses the process-wide default [`CryptoProvider`] if one is installed at that point,
-/// and falls back to `aws-lc-rs` otherwise.
+/// cache. It uses the [process-wide default `CryptoProvider`][default-provider], which the
+/// application is responsible for choosing.
+///
+/// [default-provider]: rustls::crypto::CryptoProvider#using-the-per-process-default-cryptoprovider
+///
+/// # Panics
+///
+/// Panics if no default `CryptoProvider` is installed and rustls can't pick one from its crate
+/// features.
 pub fn tls_config() -> Result<Arc<ClientConfig>, BoxError> {
     static CONFIG: OnceLock<Arc<ClientConfig>> = OnceLock::new();
 
@@ -31,12 +37,8 @@ pub fn tls_config() -> Result<Arc<ClientConfig>, BoxError> {
 }
 
 fn build_tls_config() -> Result<ClientConfig, BoxError> {
-    let provider = CryptoProvider::get_default()
-        .cloned()
-        .unwrap_or_else(|| Arc::new(rustls::crypto::aws_lc_rs::default_provider()));
-    let verifier = SonosVerifier::new(provider.clone())?;
-    Ok(ClientConfig::builder_with_provider(provider)
-        .with_safe_default_protocol_versions()?
+    let verifier = SonosVerifier::new()?;
+    Ok(ClientConfig::builder()
         .dangerous()
         .with_custom_certificate_verifier(Arc::new(verifier))
         .with_no_client_auth())
@@ -53,11 +55,10 @@ struct SonosVerifier {
 }
 
 impl SonosVerifier {
-    fn new(provider: Arc<CryptoProvider>) -> Result<Self, BoxError> {
+    fn new() -> Result<Self, BoxError> {
         let mut roots = RootCertStore::empty();
         roots.add(CertificateDer::from_slice(SONOS_ROOT_CA))?;
-        let inner =
-            WebPkiServerVerifier::builder_with_provider(Arc::new(roots), provider).build()?;
+        let inner = WebPkiServerVerifier::builder(Arc::new(roots)).build()?;
         Ok(Self { inner })
     }
 }

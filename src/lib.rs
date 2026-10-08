@@ -31,6 +31,21 @@
 //! # Ok(())
 //! # }
 //! ```
+//!
+//! ## TLS
+//!
+//! Players are reached over TLS, using [rustls]. As a library, this crate doesn't choose a crypto
+//! provider for it: the application must either install one as the [process-wide default], or
+//! enable exactly one of rustls' `aws_lc_rs` and `ring` features so that rustls can pick it.
+//! Connecting to a player panics otherwise.
+//!
+//! ```no_run
+//! rustls::crypto::aws_lc_rs::default_provider()
+//!     .install_default()
+//!     .expect("a crypto provider is already installed");
+//! ```
+//!
+//! [process-wide default]: rustls::crypto::CryptoProvider#using-the-per-process-default-cryptoprovider
 
 mod connection;
 mod discovery;
