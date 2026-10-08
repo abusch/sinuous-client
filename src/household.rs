@@ -15,7 +15,7 @@ use crate::{
     ConnectOptions, Connection, Error, Event, EventPayload, GroupHandle, GroupId, HouseholdId,
     PlayerHandle, PlayerId, Subscription,
     connection::lock,
-    groups::{Group, Groups, Player},
+    groups::{Group, GroupStatus, Groups, Player},
 };
 
 const EVENT_CHANNEL_CAPACITY: usize = 256;
@@ -81,6 +81,11 @@ impl Topology {
 /// kept until it comes back. Subscriptions are dropped (and no longer listed by
 /// [`Household::subscriptions`]) only when the player rejects them, or when their group is gone
 /// while the player that coordinated it is back.
+///
+/// Group-scoped subscriptions also follow their group: when its coordinator changes, they are
+/// sent to the new coordinator, and they are dropped when the group is gone, e.g. after its
+/// players joined other groups. Either way, the `groupCoordinatorChanged` event is still
+/// delivered.
 ///
 /// Handles hold on to the connection they were created with, so commands sent through a handle
 /// obtained before the connection was lost fail with [`Error::ConnectionClosed`]. Get a new
@@ -241,8 +246,8 @@ impl Household {
     /// Events are delivered to [`Household::events`]. The household subscribes to
     /// [`Subscription::Groups`] itself, to keep the topology up to date.
     ///
-    /// The subscription is restored if the connection to the player is lost; see
-    /// [Lost connections](Household#lost-connections).
+    /// The subscription is restored if the connection to the player is lost, and follows its
+    /// group if the group moves; see [Lost connections](Household#lost-connections).
     pub async fn subscribe(&self, subscription: &Subscription) -> Result<(), Error> {
         let conn = self.connection_to(&self.route(subscription)?).await?;
         conn.subscribe(subscription).await?;
@@ -368,8 +373,9 @@ impl Household {
         Ok(conn)
     }
 
-    /// Forward a connection's events to the household, updating the topology on the way. Once
-    /// the connection is closed, restore the subscriptions that were sent on it.
+    /// Forward a connection's events to the household, updating the topology on the way, and
+    /// follow subscribed groups that move. Once the connection is closed, restore the
+    /// subscriptions that were sent on it.
     ///
     /// The task doesn't keep the household (or the connection) alive.
     fn watch(&self, conn: &Connection) {
@@ -387,9 +393,21 @@ impl Household {
                     biased;
                     event = events.recv() => match event {
                         Ok(event) => {
-                            if let EventPayload::Groups(groups) = &event.payload {
-                                debug!("Updating topology");
-                                topology.send_modify(|topology| topology.update(groups.clone()));
+                            match (&event.payload, &event.group_id) {
+                                (EventPayload::Groups(groups), _) => {
+                                    debug!("Updating topology");
+                                    topology
+                                        .send_modify(|topology| topology.update(groups.clone()));
+                                }
+                                (EventPayload::GroupCoordinatorChanged(changed), Some(group_id)) => {
+                                    tokio::spawn(follow_group(
+                                        household.clone(),
+                                        id,
+                                        group_id.clone(),
+                                        changed.group_status,
+                                    ));
+                                }
+                                _ => {}
                             }
                             // Fails only if nobody is listening.
                             let _ = events_tx.send(event);
@@ -421,8 +439,8 @@ impl Household {
         }
     }
 
-    /// Send `subscriptions` again, after the connection they were sent on was lost. Returns the
-    /// ones that failed and should be retried.
+    /// Send `subscriptions` again, after the connection they were sent on was lost or their group
+    /// moved. Returns the ones that failed and should be retried.
     async fn resubscribe(&self, subscriptions: Vec<Subscription>) -> Vec<Subscription> {
         let mut failed = Vec::new();
         // Players that couldn't be reached this time, so as not to wait for each of their
@@ -464,7 +482,22 @@ impl Household {
             // after this one are routed with the topology, so wait for it to be applied.
             let mut topology =
                 (subscription == Subscription::Groups).then(|| self.inner.topology.subscribe());
-            let result = conn.subscribe(&subscription).await.map(|()| conn);
+            let result = match conn.subscribe(&subscription).await {
+                Ok(()) => Ok(conn),
+                // The topology hasn't caught up with the group's new coordinator yet: go where
+                // the player says.
+                Err(e) => match moved_to(&e) {
+                    Some(url) => {
+                        async {
+                            let conn = self.connection_to(url).await?;
+                            conn.subscribe(&subscription).await?;
+                            Ok(conn)
+                        }
+                        .await
+                    }
+                    None => Err(e),
+                },
+            };
             match result {
                 Ok(conn) => {
                     debug!("Restored subscription {subscription:?}");
@@ -554,9 +587,24 @@ impl Inner {
     }
 }
 
-/// Whether `error` means that the player won't accept the subscription.
+/// Where the group went, if `error` says it moved.
+fn moved_to(error: &Error) -> Option<&Url> {
+    match error {
+        Error::GroupCoordinatorChanged(changed) if changed.group_status == GroupStatus::Moved => {
+            changed.websocket_url.as_ref()
+        }
+        _ => None,
+    }
+}
+
+/// Whether `error` means that the player won't accept the subscription: it rejected it, or the
+/// group is gone.
 fn is_rejection(error: &Error) -> bool {
-    matches!(error, Error::Api(_))
+    match error {
+        Error::Api(_) => true,
+        Error::GroupCoordinatorChanged(changed) => changed.group_status == GroupStatus::Gone,
+        _ => false,
+    }
 }
 
 /// Restore the subscriptions that were sent on connection `id` to `url`, after it was lost.
@@ -575,6 +623,40 @@ async fn restore_lost(household: Weak<Inner>, url: Url, id: u64) {
         lost.len()
     );
     restore(household, lost).await;
+}
+
+/// Follow the subscriptions to `group_id` that were sent on connection `id`, after its player
+/// said that the group moved to another coordinator or disappeared.
+async fn follow_group(household: Weak<Inner>, id: u64, group_id: GroupId, status: GroupStatus) {
+    let Some(inner) = household.upgrade() else {
+        return;
+    };
+    let in_group = |subscription: &Subscription| subscription.group_id() == Some(&group_id);
+    match status {
+        GroupStatus::Moved => {
+            let moved = inner.claim(id, in_group);
+            drop(inner);
+            if !moved.is_empty() {
+                info!(
+                    "Group {group_id} moved, following {} subscriptions",
+                    moved.len()
+                );
+                restore(household, moved).await;
+            }
+        }
+        GroupStatus::Gone => {
+            lock(&inner.subscriptions).retain(|subscription, sent_to| {
+                let gone = sent_to.connection == Some(id) && in_group(subscription);
+                if gone {
+                    info!("Group {group_id} is gone, dropping subscription {subscription:?}");
+                }
+                !gone
+            });
+        }
+        // The group's name or members changed: its subscriptions carry on.
+        GroupStatus::Updated => {}
+        GroupStatus::Unknown => debug!("Group {group_id} changed in an unknown way"),
+    }
 }
 
 /// Send `subscriptions` again, which have been [claimed](Inner::claim).
@@ -651,12 +733,32 @@ mod tests {
         groups_event: Mutex<Value>,
         /// Commands that fail with a `globalError`, as `namespace:command:target`.
         rejected: Mutex<HashSet<String>>,
+        /// Groups that moved to another coordinator, by ID, with the new coordinator's websocket
+        /// URL.
+        moves: Mutex<HashMap<String, Url>>,
+    }
+
+    /// A `groupCoordinatorChanged` event for group `B:1`.
+    fn coordinator_changed(status: GroupStatus, new_url: Option<&Url>) -> Value {
+        let status = match status {
+            GroupStatus::Gone => "GROUP_STATUS_GONE",
+            GroupStatus::Moved => "GROUP_STATUS_MOVED",
+            GroupStatus::Updated => "GROUP_STATUS_UPDATED",
+            GroupStatus::Unknown => unreachable!(),
+        };
+        json!([
+            {"namespace": "global", "name": "groupCoordinatorChanged", "groupId": "B:1",
+             "householdId": "Sonos_1"},
+            {"_objectType": "groupCoordinatorChanged", "groupStatus": status,
+             "groupName": "Office", "websocketUrl": new_url.map(Url::as_str)}
+        ])
     }
 
     /// Answers `getGroups` with `topology`, sends a `groups` event on subscription, sends a
     /// `groupVolume` event on `groupVolume` subscription, and acknowledges everything else, as
     /// [`Behavior`] says.
     fn handler(
+        me: Url,
         log: Log,
         behavior: Arc<Behavior>,
         topology: Value,
@@ -673,6 +775,16 @@ mod tests {
             if behavior.rejected.lock().unwrap().contains(&logged) {
                 let error = json!({"_objectType": "globalError", "errorCode": "ERROR_NOT_CAPABLE"});
                 return Some(reply(header, false, error));
+            }
+            if let Some(group_id) = header["groupId"].as_str()
+                && let Some(new_url) = behavior.moves.lock().unwrap().get(group_id)
+                && *new_url != me
+            {
+                return Some(reply(
+                    header,
+                    false,
+                    coordinator_changed(GroupStatus::Moved, Some(new_url))[1].clone(),
+                ));
             }
             let mut replies = match command {
                 "getGroups" => reply(header, true, topology.clone()),
@@ -741,13 +853,18 @@ mod tests {
         let options = ConnectOptions::default()
             .request_timeout(Duration::from_millis(500))
             .connect_timeout(Duration::from_millis(500));
-        let url_a = a.url();
+        let (url_a, url_b) = (a.url(), b.url());
         let behavior = Arc::new(Behavior {
             groups_event: Mutex::new(updated_topology),
             ..Behavior::default()
         });
-        let a = a.serve_many(handler(log_a.clone(), behavior.clone(), topology.clone()));
-        let b = b.serve_many(handler(log_b.clone(), behavior.clone(), topology));
+        let a = a.serve_many(handler(
+            url_a.clone(),
+            log_a.clone(),
+            behavior.clone(),
+            topology.clone(),
+        ));
+        let b = b.serve_many(handler(url_b, log_b.clone(), behavior.clone(), topology));
 
         let conn = Connection::connect_to(
             &url_a,
@@ -1296,6 +1413,112 @@ mod tests {
         })
         .await;
         assert_eq!(b.accepted(), 2);
+    }
+
+    #[tokio::test]
+    async fn follows_groups_to_their_new_coordinator() {
+        let Fixture {
+            household,
+            b,
+            log_a,
+            log_b,
+            behavior,
+            ..
+        } = fixture().await;
+        let subscriptions = [
+            Subscription::GroupVolume(GroupId::new("B:1")),
+            Subscription::Playback(GroupId::new("B:1")),
+        ];
+        for subscription in &subscriptions {
+            household.subscribe(subscription).await.unwrap();
+        }
+
+        // `A` now coordinates `B:1`, but the topology doesn't know yet.
+        let url_a = household.inner.primary_url.clone();
+        behavior
+            .moves
+            .lock()
+            .unwrap()
+            .insert("B:1".to_owned(), url_a.clone());
+        let event = coordinator_changed(GroupStatus::Moved, Some(&url_a));
+        // Twice, as when it comes from several connections.
+        b.push(event.clone());
+        b.push(event);
+
+        wait_for_logged(&log_a, "groupVolume:subscribe:B:1", 1).await;
+        wait_for_logged(&log_a, "playback:subscribe:B:1", 1).await;
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        // Restored once each, through `B` which redirected to `A`.
+        let log_a = logged(&log_a);
+        assert_eq!(log_a.iter().filter(|c| c.contains(":B:1")).count(), 2);
+        assert_eq!(
+            logged(&log_b)
+                .iter()
+                .filter(|c| *c == "groupVolume:subscribe:B:1")
+                .count(),
+            2
+        );
+        for subscription in &subscriptions {
+            assert!(household.subscriptions().contains(subscription));
+        }
+
+        // Nothing is left on `B` to restore.
+        b.drop_connections();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert_eq!(b.accepted(), 1);
+    }
+
+    #[tokio::test]
+    async fn drops_subscriptions_when_a_group_is_gone() {
+        let Fixture { household, b, .. } = fixture().await;
+        let group_volume = Subscription::GroupVolume(GroupId::new("B:1"));
+        let player_volume = Subscription::PlayerVolume(PlayerId::new("B"));
+        household.subscribe(&group_volume).await.unwrap();
+        household.subscribe(&player_volume).await.unwrap();
+        let mut events = household.events();
+
+        b.push(coordinator_changed(GroupStatus::Gone, None));
+        wait_until("the subscription to be dropped", || {
+            !household.subscriptions().contains(&group_volume)
+        })
+        .await;
+        assert!(household.subscriptions().contains(&player_volume));
+        // The event is still delivered.
+        let event = events.recv().await.unwrap();
+        assert!(matches!(
+            event.payload,
+            EventPayload::GroupCoordinatorChanged(_)
+        ));
+    }
+
+    #[tokio::test]
+    async fn keeps_subscriptions_when_a_group_is_updated() {
+        let Fixture {
+            household,
+            b,
+            log_a,
+            log_b,
+            behavior,
+            ..
+        } = fixture().await;
+        let subscription = Subscription::GroupVolume(GroupId::new("B:1"));
+        household.subscribe(&subscription).await.unwrap();
+
+        // E.g. a player joined the group.
+        b.push(coordinator_changed(GroupStatus::Updated, None));
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(household.subscriptions().contains(&subscription));
+        assert_eq!(logged(&log_b), ["groupVolume:subscribe:B:1"]);
+
+        // A later move is still followed.
+        let url_a = household.inner.primary_url.clone();
+        behavior
+            .moves
+            .lock()
+            .unwrap()
+            .insert("B:1".to_owned(), url_a.clone());
+        b.push(coordinator_changed(GroupStatus::Moved, Some(&url_a)));
+        wait_for_logged(&log_a, "groupVolume:subscribe:B:1", 1).await;
     }
 
     #[test]

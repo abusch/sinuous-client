@@ -13,6 +13,7 @@ use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
 use tokio::{
     net::{TcpListener, TcpStream},
+    sync::broadcast,
     task::JoinHandle,
 };
 use tokio_tungstenite::tungstenite::{
@@ -46,7 +47,9 @@ impl FakePlayer {
     pub fn serve(self, handler: impl Handler) -> JoinHandle<()> {
         tokio::spawn(async move {
             let (stream, _) = self.listener.accept().await.unwrap();
-            serve_connection(stream, Arc::new(handler)).await;
+            // Nothing to push.
+            let (_, push) = broadcast::channel(1);
+            serve_connection(stream, Arc::new(handler), push).await;
         })
     }
 
@@ -57,6 +60,7 @@ impl FakePlayer {
             available: AtomicBool::new(true),
             accepted: AtomicUsize::new(0),
             connections: Mutex::default(),
+            push: broadcast::Sender::new(16),
         });
         let handler = Arc::new(handler);
         let server = FakeServer {
@@ -69,7 +73,8 @@ impl FakePlayer {
                 if !state.available.load(Ordering::Relaxed) {
                     continue;
                 }
-                let connection = tokio::spawn(serve_connection(stream, handler.clone()));
+                let push = state.push.subscribe();
+                let connection = tokio::spawn(serve_connection(stream, handler.clone(), push));
                 state.connections.lock().unwrap().push(connection);
             }
         });
@@ -94,6 +99,8 @@ struct ServerState {
     available: AtomicBool,
     accepted: AtomicUsize,
     connections: Mutex<Vec<JoinHandle<()>>>,
+    /// Messages to send on all open connections.
+    push: broadcast::Sender<Value>,
 }
 
 impl FakeServer {
@@ -109,6 +116,11 @@ impl FakeServer {
         self.state.available.store(available, Ordering::Relaxed);
     }
 
+    /// Send a message (e.g. an event) on all open connections.
+    pub fn push(&self, message: Value) {
+        self.state.push.send(message).unwrap();
+    }
+
     /// The number of connections accepted so far, including the ones dropped while unavailable.
     pub fn accepted(&self) -> usize {
         self.state.accepted.load(Ordering::Relaxed)
@@ -116,7 +128,11 @@ impl FakeServer {
 }
 
 #[allow(clippy::result_large_err)] // The handshake callback's signature is imposed by tungstenite.
-async fn serve_connection(stream: TcpStream, handler: Arc<impl Handler>) {
+async fn serve_connection(
+    stream: TcpStream,
+    handler: Arc<impl Handler>,
+    mut push: broadcast::Receiver<Value>,
+) {
     let ws = tokio_tungstenite::accept_hdr_async(stream, |req: &Request, mut resp: Response| {
         assert_eq!(req.headers()["X-Sonos-Api-Key"], DEFAULT_API_KEY);
         resp.headers_mut()
@@ -127,7 +143,24 @@ async fn serve_connection(stream: TcpStream, handler: Arc<impl Handler>) {
     .unwrap();
     let (write, mut read) = ws.split();
     let write = Arc::new(tokio::sync::Mutex::new(write));
-    while let Some(Ok(msg)) = read.next().await {
+    let mut pushing = true;
+    loop {
+        let msg = tokio::select! {
+            msg = read.next() => msg,
+            message = push.recv(), if pushing => {
+                match message {
+                    Ok(message) => {
+                        let text = Message::text(message.to_string());
+                        let _ = write.lock().await.send(text).await;
+                    }
+                    // Only stop once the server is gone: a lagging connection just misses some.
+                    Err(broadcast::error::RecvError::Lagged(_)) => {}
+                    Err(broadcast::error::RecvError::Closed) => pushing = false,
+                }
+                continue;
+            }
+        };
+        let Some(Ok(msg)) = msg else { break };
         let Message::Text(text) = msg else { continue };
         let [header, body]: [Value; 2] = serde_json::from_str(text.as_str()).unwrap();
         let delay = body["delay"].as_u64().unwrap_or(0);
