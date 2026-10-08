@@ -16,7 +16,7 @@ rustls = { version = "0.23", default-features = false, features = ["std", "tls12
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0.145"
 thiserror = "2"
-tokio = { version = "1.53.2", features = ["net", "rt", "sync", "time"] }
+tokio = { version = "1.53.2", features = ["macros", "net", "rt", "sync", "time"] }
 # `__rustls-tls` enables rustls without loading any root certificates: we always pass our own
 # `ClientConfig`, which only trusts the Sonos root CA.
 tokio-tungstenite = { version = "0.30.0", features = ["__rustls-tls"] }

@@ -116,6 +116,14 @@ impl Subscription {
         }
     }
 
+    /// The group of a group-scoped subscription.
+    pub(crate) fn group_id(&self) -> Option<&GroupId> {
+        match self {
+            Self::Playback(id) | Self::PlaybackMetadata(id) | Self::GroupVolume(id) => Some(id),
+            _ => None,
+        }
+    }
+
     fn target<'a>(&'a self, conn: &'a Connection) -> Target<'a> {
         match self {
             Self::Groups | Self::Favorites | Self::Playlists => conn.household_target(),

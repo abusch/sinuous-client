@@ -90,7 +90,7 @@ async fn main() -> anyhow::Result<()> {
         println!("Player {} volume: {}", p.name, volume.volume);
     }
 
-    let conn = household.connection();
+    let conn = household.connection().await?;
     let favorites = conn.get_favorites().await?;
     println!("\nFavorites:");
     for f in &favorites.items {

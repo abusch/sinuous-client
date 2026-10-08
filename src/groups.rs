@@ -247,7 +247,8 @@ pub enum GroupStatus {
     /// The group is coordinated by another player.
     #[serde(rename = "GROUP_STATUS_MOVED")]
     Moved,
-    /// The group's ID changed.
+    /// The group changed, e.g. players joined or left it. It keeps its ID, and subscriptions to
+    /// it carry on.
     #[serde(rename = "GROUP_STATUS_UPDATED")]
     Updated,
     #[serde(other)]
