@@ -11,11 +11,31 @@ async fn main() -> anyhow::Result<()> {
                 .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("sonos_ws=info")),
         )
         .init();
-    let host = std::env::args()
-        .nth(1)
-        .unwrap_or_else(|| "10.10.190.82".to_owned());
-
-    let sonos = Connection::connect(&host).await?;
+    let sonos = match std::env::args().nth(1) {
+        Some(host) => Connection::connect(&host).await?,
+        None => {
+            let players = sonos_ws::discover(Duration::from_secs(2)).await?;
+            println!("Discovered {} players:", players.len());
+            for p in &players {
+                let group = p.group.as_ref();
+                println!(
+                    "\t{} at {} (group {:?}{})",
+                    p.player_id,
+                    p.address,
+                    group.map(|g| &g.name),
+                    if group.is_some_and(|g| g.is_coordinator) {
+                        ", coordinator"
+                    } else {
+                        ""
+                    },
+                );
+            }
+            let Some(player) = players.first() else {
+                anyhow::bail!("No players found");
+            };
+            player.connect().await?
+        }
+    };
     println!(
         "Connected to {} (household {})",
         sonos.websocket_url(),

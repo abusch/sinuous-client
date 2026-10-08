@@ -9,6 +9,9 @@ pub(crate) type BoxError = Box<dyn std::error::Error + Send + Sync + 'static>;
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum Error {
+    /// Searching for players on the network failed.
+    #[error("failed to discover players")]
+    Discovery(#[source] BoxError),
     /// Establishing the websocket connection (or learning the player's household) failed.
     #[error("failed to connect to player")]
     Connect(#[source] BoxError),
