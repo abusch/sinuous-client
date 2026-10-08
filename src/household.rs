@@ -505,10 +505,18 @@ mod tests {
             .unwrap();
         assert_eq!(logged(&log_b), ["groupVolume:subscribe:B:1"]);
 
-        let event = tokio::time::timeout(Duration::from_secs(1), events.recv())
-            .await
-            .unwrap()
-            .unwrap();
+        // The `groups` event from `A`, sent when the household subscribed to the topology, may
+        // still be in flight: skip it.
+        let event = tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                let event = events.recv().await.unwrap();
+                if matches!(event.payload, EventPayload::GroupVolume(_)) {
+                    break event;
+                }
+            }
+        })
+        .await
+        .unwrap();
         assert_eq!(event.group_id, Some(GroupId::new("B:1")));
         assert!(matches!(event.payload, EventPayload::GroupVolume(v) if v.volume == 10));
     }
