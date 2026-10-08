@@ -70,6 +70,17 @@ impl FakePlayer {
     }
 }
 
+/// A player that accepts TCP connections but never completes the websocket handshake.
+pub(crate) async fn stalled_player() -> (Url, JoinHandle<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = url(listener.local_addr().unwrap());
+    let server = tokio::spawn(async move {
+        let (_stream, _) = listener.accept().await.unwrap();
+        std::future::pending::<()>().await;
+    });
+    (url, server)
+}
+
 /// Start a fake player; see [`FakePlayer::serve`].
 pub(crate) async fn fake_player(
     handler: impl Fn(&Value, &Value) -> Option<Vec<Value>> + Send + Sync + 'static,

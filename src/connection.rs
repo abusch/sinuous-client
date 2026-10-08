@@ -51,6 +51,8 @@ pub struct ConnectOptions {
     pub api_key: String,
     /// How long to wait for a reply to a command.
     pub request_timeout: Duration,
+    /// How long to wait for the websocket connection to be established.
+    pub connect_timeout: Duration,
     /// The household the player belongs to, if already known. Otherwise it is asked for when
     /// connecting, which costs a round-trip.
     pub household_id: Option<HouseholdId>,
@@ -61,6 +63,7 @@ impl Default for ConnectOptions {
         Self {
             api_key: DEFAULT_API_KEY.to_owned(),
             request_timeout: Duration::from_secs(10),
+            connect_timeout: Duration::from_secs(10),
             household_id: None,
         }
     }
@@ -74,6 +77,11 @@ impl ConnectOptions {
 
     pub fn request_timeout(mut self, timeout: Duration) -> Self {
         self.request_timeout = timeout;
+        self
+    }
+
+    pub fn connect_timeout(mut self, timeout: Duration) -> Self {
+        self.connect_timeout = timeout;
         self
     }
 
@@ -153,10 +161,13 @@ impl Connection {
             .with_header("X-Sonos-Api-Key", options.api_key.clone())
             .with_sub_protocol(SUB_PROTOCOL);
         let tls = tls_config().map_err(Error::Connect)?;
-        let (mut ws, _) =
-            connect_async_tls_with_config(request, None, false, Some(Connector::Rustls(tls)))
-                .await
-                .map_err(|e| Error::Connect(Box::new(e)))?;
+        let connect =
+            connect_async_tls_with_config(request, None, false, Some(Connector::Rustls(tls)));
+        // An unreachable player would otherwise only fail once the OS gives up on TCP.
+        let (mut ws, _) = tokio::time::timeout(options.connect_timeout, connect)
+            .await
+            .map_err(|e| Error::Connect(Box::new(e)))?
+            .map_err(|e| Error::Connect(Box::new(e)))?;
 
         let household_id = match options.household_id {
             Some(household_id) => household_id,
@@ -511,7 +522,7 @@ mod tests {
     use super::*;
     use crate::{
         events::{EventPayload, Subscription},
-        test_support::{fake_player, reply, url},
+        test_support::{fake_player, reply, stalled_player, url},
     };
 
     async fn connect(addr: SocketAddr) -> Connection {
@@ -543,6 +554,14 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(conn.household_id(), &HouseholdId::new("Sonos_42"));
+    }
+
+    #[tokio::test]
+    async fn times_out_when_the_handshake_stalls() {
+        let (url, _server) = stalled_player().await;
+        let options = ConnectOptions::default().connect_timeout(Duration::from_millis(100));
+        let err = Connection::connect_to(&url, options).await.unwrap_err();
+        assert!(matches!(err, Error::Connect(_)), "{err:?}");
     }
 
     #[tokio::test]
