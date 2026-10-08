@@ -297,7 +297,9 @@ impl Household {
         lock(&self.inner.subscriptions).clear();
         let slots: Vec<_> = lock(&self.inner.connections).drain().collect();
         for (_, slot) in slots {
-            if let Some(conn) = slot.lock().await.take() {
+            // Not in the `if let`, which would keep the slot locked while closing.
+            let conn = slot.lock().await.take();
+            if let Some(conn) = conn {
                 conn.close().await;
             }
         }
