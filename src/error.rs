@@ -2,7 +2,7 @@ use std::fmt;
 
 use serde::Deserialize;
 
-use crate::groups::GroupCoordinatorChanged;
+use crate::{GroupId, PlayerId, groups::GroupCoordinatorChanged};
 
 pub(crate) type BoxError = Box<dyn std::error::Error + Send + Sync + 'static>;
 
@@ -31,6 +31,12 @@ pub enum Error {
     /// the group has moved, [`GroupCoordinatorChanged::websocket_url`] says where to go instead.
     #[error("group coordinator changed ({:?})", .0.group_status)]
     GroupCoordinatorChanged(Box<GroupCoordinatorChanged>),
+    /// The group is not in the household's topology.
+    #[error("unknown group {0}")]
+    UnknownGroup(GroupId),
+    /// The player is not in the household's topology.
+    #[error("unknown player {0}")]
+    UnknownPlayer(PlayerId),
     /// The player sent a message we could not make sense of.
     #[error("invalid message from player")]
     Protocol(#[source] BoxError),

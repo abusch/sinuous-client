@@ -16,8 +16,18 @@
 //! # }
 //! ```
 //!
-//! Unlike the cloud API, group- and player-scoped commands must be sent to the player that
-//! coordinates the group (see [`Error::GroupCoordinatorChanged`]).
+//! Unlike the cloud API, group commands must be sent to the group's coordinator and player
+//! commands to the player itself. [`Household`] routes commands to the right player:
+//!
+//! ```no_run
+//! # async fn example() -> Result<(), sonos_ws::Error> {
+//! let household = sonos_ws::Household::connect("10.10.190.82").await?;
+//! for group in &household.topology().groups {
+//!     household.group(&group.id).await?.pause().await?;
+//! }
+//! # Ok(())
+//! # }
+//! ```
 
 mod connection;
 mod discovery;
@@ -26,11 +36,14 @@ pub mod events;
 pub mod favorites;
 pub mod groups;
 pub mod home_theater;
+mod household;
 mod ids;
 pub mod playback;
 pub mod playback_metadata;
 pub mod playlists;
 mod protocol;
+#[cfg(test)]
+mod test_support;
 mod tls;
 pub mod volume;
 
@@ -38,4 +51,5 @@ pub use connection::{ConnectOptions, Connection, DEFAULT_API_KEY, GroupHandle, P
 pub use discovery::{DiscoveredGroup, DiscoveredPlayer, discover};
 pub use error::{ApiError, Error};
 pub use events::{Event, EventPayload, Subscription};
+pub use household::{Household, Topology};
 pub use ids::{FavoriteId, GroupId, HouseholdId, PlayerId, PlaylistId};

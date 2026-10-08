@@ -22,7 +22,11 @@ impl Connection {
         .await
     }
 
-    /// Create a new group from the given players.
+    /// Create a new group from the given players. The first player becomes its coordinator.
+    ///
+    /// When sent to a player that isn't part of the new group, the reply comes before the group
+    /// is actually created, so commands sent right after may be applied first. Send it to the
+    /// first player instead, or use [`Household::create_group`](crate::Household::create_group).
     pub async fn create_group(&self, player_ids: &[PlayerId]) -> Result<Group, Error> {
         #[derive(Serialize)]
         #[serde(rename_all = "camelCase")]

@@ -34,7 +34,7 @@ use crate::{
 
 /// The API key used by default. Sonos players accept this well-known key for local control.
 pub const DEFAULT_API_KEY: &str = "12345678-abcd-1234-5678-123456789000";
-const SUB_PROTOCOL: &str = "v1.api.smartspeaker.audio";
+pub(crate) const SUB_PROTOCOL: &str = "v1.api.smartspeaker.audio";
 const EVENT_CHANNEL_CAPACITY: usize = 256;
 const CLOSE_TIMEOUT: Duration = Duration::from_secs(5);
 /// `cmdId` of the request used to learn the household ID. Regular commands start at 1.
@@ -86,8 +86,14 @@ impl ConnectOptions {
 /// A websocket connection to a single Sonos player.
 ///
 /// Household-scoped commands (groups, favorites, playlists...) can be sent to any player in the
-/// household. Group- and player-scoped commands must be sent to the connection of the group's
-/// coordinator; otherwise they fail with [`Error::GroupCoordinatorChanged`].
+/// household, but the other commands only work on specific players:
+///
+/// * group commands must be sent to the group's coordinator; other players reply with
+///   [`Error::GroupCoordinatorChanged`].
+/// * player commands must be sent to the player itself; other players reply with an
+///   `ERROR_INVALID_OBJECT_ID` [`Error::Api`].
+///
+/// [`Household`](crate::Household) takes care of this.
 ///
 /// `Connection` is cheap to clone, and commands can be issued concurrently from several tasks.
 /// The underlying websocket is closed when the last clone is dropped, or explicitly with
@@ -212,6 +218,11 @@ impl Connection {
 
     pub fn websocket_url(&self) -> &Url {
         &self.inner.websocket_url
+    }
+
+    /// Whether the websocket has been closed, by either side.
+    pub fn is_closed(&self) -> bool {
+        lock(&self.inner.pending.0).is_none()
     }
 
     /// Commands targeting the given group.
@@ -500,69 +511,18 @@ mod tests {
     use std::net::SocketAddr;
 
     use serde_json::json;
-    use tokio::net::TcpListener;
-    use tokio_tungstenite::tungstenite::handshake::server::{Request, Response};
 
     use super::*;
-    use crate::events::{EventPayload, Subscription};
-
-    /// Start a fake player that answers each command with `handler(header, body)` (or not at all
-    /// if it returns `None`), after an optional delay given by the command's `delay` parameter.
-    #[allow(clippy::result_large_err)] // The handshake callback's signature is imposed by tungstenite.
-    async fn fake_player(
-        handler: fn(&Value, &Value) -> Option<Vec<Value>>,
-    ) -> (SocketAddr, JoinHandle<()>) {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        let task = tokio::spawn(async move {
-            let (stream, _) = listener.accept().await.unwrap();
-            let ws =
-                tokio_tungstenite::accept_hdr_async(stream, |req: &Request, mut resp: Response| {
-                    assert_eq!(req.headers()["X-Sonos-Api-Key"], DEFAULT_API_KEY);
-                    resp.headers_mut()
-                        .insert("Sec-WebSocket-Protocol", SUB_PROTOCOL.parse().unwrap());
-                    Ok(resp)
-                })
-                .await
-                .unwrap();
-            let (write, mut read) = ws.split();
-            let write = Arc::new(tokio::sync::Mutex::new(write));
-            while let Some(Ok(msg)) = read.next().await {
-                let Message::Text(text) = msg else { continue };
-                let [header, body]: [Value; 2] = serde_json::from_str(text.as_str()).unwrap();
-                let delay = body["delay"].as_u64().unwrap_or(0);
-                let Some(replies) = handler(&header, &body) else {
-                    continue;
-                };
-                let write = write.clone();
-                tokio::spawn(async move {
-                    tokio::time::sleep(Duration::from_millis(delay)).await;
-                    for reply in replies {
-                        let text = Message::text(reply.to_string());
-                        write.lock().await.send(text).await.unwrap();
-                    }
-                });
-            }
-        });
-        (addr, task)
-    }
-
-    fn url(addr: SocketAddr) -> Url {
-        Url::parse(&format!("ws://{addr}/websocket/api")).unwrap()
-    }
+    use crate::{
+        events::{EventPayload, Subscription},
+        test_support::{fake_player, reply, url},
+    };
 
     async fn connect(addr: SocketAddr) -> Connection {
         let options = ConnectOptions::default()
             .request_timeout(Duration::from_millis(500))
             .household_id(HouseholdId::new("Sonos_1"));
         Connection::connect_to(&url(addr), options).await.unwrap()
-    }
-
-    fn reply(header: &Value, success: bool, body: Value) -> Vec<Value> {
-        vec![json!([
-            {"namespace": header["namespace"], "cmdId": header["cmdId"], "success": success},
-            body
-        ])]
     }
 
     #[tokio::test]
