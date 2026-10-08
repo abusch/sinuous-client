@@ -1,6 +1,7 @@
 //! Local control of Sonos players over their websocket API.
 //!
-//! This is an unofficial client: it is not affiliated with or endorsed by Sonos, Inc.
+//! This is an unofficial client: it is not affiliated with or endorsed by Sonos, Inc. The local
+//! API it uses is undocumented, and could change or stop working with any firmware update.
 //!
 //! The protocol mirrors the [Sonos Control API](https://docs.sonos.com/docs/control) (namespaces,
 //! commands and objects), but is spoken directly to players on the local network:
@@ -55,3 +56,8 @@ pub use error::{ApiError, Error};
 pub use events::{Event, EventPayload, Subscription};
 pub use household::{Household, Topology};
 pub use ids::{FavoriteId, GroupId, HouseholdId, PlayerId, PlaylistId};
+
+// Check that the README example compiles.
+#[cfg(doctest)]
+#[doc = include_str!("../README.md")]
+struct ReadmeDoctests;

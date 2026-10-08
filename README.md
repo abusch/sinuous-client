@@ -1,0 +1,47 @@
+# sinuous-client
+
+An unofficial Rust client for controlling Sonos speakers on your local network, through the
+websocket API the players expose. It's the library behind
+[sinuous](https://github.com/abusch/sinuous), a TUI for Sonos.
+
+> [!WARNING]
+> This uses an **undocumented** API. It resembles the
+> [Sonos Control API](https://docs.sonos.com/docs/control), but differs from it in places, and
+> it could change or stop working with any firmware update.
+>
+> This project is not affiliated with or endorsed by Sonos, Inc.
+
+## Features
+
+- Find players on the network (SSDP)
+- Control groups, playback, volume, favorites, playlists and home theater settings
+- Receive events, e.g. when playback or volume changes
+- Send each command to the player that accepts it: group commands only work on the group's
+  coordinator, and player commands on the player itself
+
+## Example
+
+```rust,no_run
+use std::time::Duration;
+
+use sinuous_client::{Household, discover};
+
+#[tokio::main]
+async fn main() -> Result<(), sinuous_client::Error> {
+    let players = discover(Duration::from_secs(2)).await?;
+    let player = players.first().expect("no players found");
+    let household = Household::new(player.connect().await?).await?;
+
+    for group in &household.topology().groups {
+        let status = household.group(&group.id).await?.get_playback_status().await?;
+        println!("{}: {:?}", group.name, status.playback_state);
+    }
+    Ok(())
+}
+```
+
+`cargo run --example household` prints a summary of the household it finds.
+
+## License
+
+MIT

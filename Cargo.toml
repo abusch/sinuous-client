@@ -2,6 +2,12 @@
 name = "sinuous-client"
 version = "0.1.0"
 edition = "2024"
+description = "Unofficial client for controlling Sonos speakers over their local websocket API"
+license = "MIT"
+repository = "https://github.com/abusch/sinuous-client"
+readme = "README.md"
+keywords = ["sonos", "speaker", "audio", "websocket", "home-automation"]
+categories = ["api-bindings", "multimedia::audio", "network-programming"]
 
 [dependencies]
 futures-util = "0.3.31"
