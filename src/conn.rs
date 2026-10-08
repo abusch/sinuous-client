@@ -1,16 +1,12 @@
 use std::sync::Arc;
 
 use rustls::{
-    ClientConfig, RootCertStore,
-    client::{
-        danger::{ServerCertVerified, ServerCertVerifier},
-        verify_server_cert_signed_by_trust_anchor,
-    },
+    ClientConfig,
+    client::danger::{ServerCertVerified, ServerCertVerifier},
     crypto::{
         CryptoProvider, WebPkiSupportedAlgorithms, verify_tls12_signature, verify_tls13_signature,
     },
     pki_types::CertificateDer,
-    server::ParsedCertificate,
 };
 
 /// Return a `ClientConfig` suitable for connecting to Sonos speakers.
@@ -30,20 +26,20 @@ pub fn tls_config() -> Result<ClientConfig, rustls::Error> {
 /// * Disable server name verification, so that we can connect using IP addresses.
 #[derive(Debug)]
 pub struct CustomVerifier {
-    roots: Arc<RootCertStore>,
+    // roots: Arc<RootCertStore>,
     supported: WebPkiSupportedAlgorithms,
 }
 
 impl CustomVerifier {
-    const ROOT_CA_CERT: &[u8] = include_bytes!("../registered_ca_root.cer");
+    // const ROOT_CA_CERT: &[u8] = include_bytes!("../registered_ca_root.cer");
 
     pub fn new() -> Result<Self, rustls::Error> {
-        let cert = CertificateDer::from_slice(Self::ROOT_CA_CERT);
-        let mut root_store = RootCertStore::empty();
-        root_store.add(cert)?;
+        // let cert = CertificateDer::from_slice(Self::ROOT_CA_CERT);
+        // let mut root_store = RootCertStore::empty();
+        // root_store.add(cert)?;
         let provider = CryptoProvider::get_default().unwrap();
         Ok(Self {
-            roots: Arc::new(root_store),
+            // roots: Arc::new(root_store),
             supported: provider.signature_verification_algorithms,
         })
     }
@@ -52,23 +48,23 @@ impl CustomVerifier {
 impl ServerCertVerifier for CustomVerifier {
     fn verify_server_cert(
         &self,
-        end_entity: &CertificateDer<'_>,
-        intermediates: &[CertificateDer<'_>],
+        _end_entity: &CertificateDer<'_>,
+        _intermediates: &[CertificateDer<'_>],
         _server_name: &rustls::pki_types::ServerName<'_>,
         ocsp_response: &[u8],
-        now: rustls::pki_types::UnixTime,
+        _now: rustls::pki_types::UnixTime,
     ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
-        let cert = ParsedCertificate::try_from(end_entity)?;
-
-        // Note: we use the crate-internal `_impl` fn here in order to provide revocation
-        // checking information, if applicable.
-        verify_server_cert_signed_by_trust_anchor(
-            &cert,
-            &self.roots,
-            intermediates,
-            now,
-            self.supported.all,
-        )?;
+        // let cert = ParsedCertificate::try_from(end_entity)?;
+        //
+        // // Note: we use the crate-internal `_impl` fn here in order to provide revocation
+        // // checking information, if applicable.
+        // verify_server_cert_signed_by_trust_anchor(
+        //     &cert,
+        //     &self.roots,
+        //     intermediates,
+        //     now,
+        //     self.supported.all,
+        // )?;
 
         if !ocsp_response.is_empty() {
             eprintln!("Unvalidated OCSP response: {:?}", ocsp_response.to_vec());
