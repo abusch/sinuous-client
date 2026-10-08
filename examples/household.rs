@@ -6,25 +6,25 @@
 //! ```sh
 //! cargo run --example household              # discover players with SSDP
 //! cargo run --example household 10.0.0.42    # or connect to a known player
-//! RUST_LOG=sonos_ws=debug cargo run --example household
+//! RUST_LOG=sinuous_client=debug cargo run --example household
 //! ```
 
 use std::time::Duration;
 
-use sonos_ws::{EventPayload, Household, Subscription};
+use sinuous_client::{EventPayload, Household, Subscription};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("sonos_ws=info")),
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("sinuous_client=info")),
         )
         .init();
     let household = match std::env::args().nth(1) {
         Some(host) => Household::connect(&host).await?,
         None => {
-            let players = sonos_ws::discover(Duration::from_secs(2)).await?;
+            let players = sinuous_client::discover(Duration::from_secs(2)).await?;
             println!("Discovered {} players:", players.len());
             for p in &players {
                 let group = p.group.as_ref();

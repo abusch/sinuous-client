@@ -1,14 +1,16 @@
 //! Local control of Sonos players over their websocket API.
 //!
+//! This is an unofficial client: it is not affiliated with or endorsed by Sonos, Inc.
+//!
 //! The protocol mirrors the [Sonos Control API](https://docs.sonos.com/docs/control) (namespaces,
 //! commands and objects), but is spoken directly to players on the local network:
 //!
 //! ```no_run
 //! # use std::time::Duration;
-//! # async fn example() -> Result<(), sonos_ws::Error> {
-//! let players = sonos_ws::discover(Duration::from_secs(2)).await?;
+//! # async fn example() -> Result<(), sinuous_client::Error> {
+//! let players = sinuous_client::discover(Duration::from_secs(2)).await?;
 //! let conn = players[0].connect().await?;
-//! // Or, with a known address: sonos_ws::Connection::connect("10.10.190.82").await?
+//! // Or, with a known address: sinuous_client::Connection::connect("10.10.190.82").await?
 //! let groups = conn.get_groups().await?;
 //! let group = conn.group(&groups.groups[0].id);
 //! group.set_volume(20).await?;
@@ -20,8 +22,8 @@
 //! commands to the player itself. [`Household`] routes commands to the right player:
 //!
 //! ```no_run
-//! # async fn example() -> Result<(), sonos_ws::Error> {
-//! let household = sonos_ws::Household::connect("10.10.190.82").await?;
+//! # async fn example() -> Result<(), sinuous_client::Error> {
+//! let household = sinuous_client::Household::connect("10.10.190.82").await?;
 //! for group in &household.topology().groups {
 //!     household.group(&group.id).await?.pause().await?;
 //! }
