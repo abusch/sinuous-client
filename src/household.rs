@@ -10,6 +10,7 @@ use url::Url;
 use crate::{
     ConnectOptions, Connection, Error, Event, EventPayload, GroupHandle, GroupId, HouseholdId,
     PlayerHandle, PlayerId, Subscription,
+    connection::lock,
     groups::{Group, Groups, Player},
 };
 
@@ -66,6 +67,10 @@ pub struct Household {
     inner: Arc<Inner>,
 }
 
+/// The connection to a player, if any. Locked while connecting, so that concurrent callers
+/// don't open duplicate connections, without holding up commands to other players.
+type ConnectionSlot = Mutex<Option<Connection>>;
+
 #[derive(Debug)]
 struct Inner {
     /// The connection the household was created from, used for household-scoped commands.
@@ -73,7 +78,7 @@ struct Inner {
     options: ConnectOptions,
     topology: Arc<watch::Sender<Topology>>,
     /// Connections to players, keyed by websocket URL.
-    connections: Mutex<HashMap<Url, Connection>>,
+    connections: std::sync::Mutex<HashMap<Url, Arc<ConnectionSlot>>>,
     events_tx: broadcast::Sender<Event>,
 }
 
@@ -100,13 +105,16 @@ impl Household {
         // Keep the topology up to date.
         conn.subscribe(&Subscription::Groups).await?;
 
-        let connections = HashMap::from([(conn.websocket_url().clone(), conn.clone())]);
+        let connections = HashMap::from([(
+            conn.websocket_url().clone(),
+            Arc::new(Mutex::new(Some(conn.clone()))),
+        )]);
         Ok(Self {
             inner: Arc::new(Inner {
                 primary: conn,
                 options,
                 topology,
-                connections: Mutex::new(connections),
+                connections: std::sync::Mutex::new(connections),
                 events_tx,
             }),
         })
@@ -206,9 +214,11 @@ impl Household {
 
     /// Close all connections.
     pub async fn close(&self) {
-        let connections: Vec<_> = self.inner.connections.lock().await.drain().collect();
-        for (_, conn) in connections {
-            conn.close().await;
+        let slots: Vec<_> = lock(&self.inner.connections).drain().collect();
+        for (_, slot) in slots {
+            if let Some(conn) = slot.lock().await.take() {
+                conn.close().await;
+            }
         }
     }
 
@@ -252,9 +262,12 @@ impl Household {
 
     /// Get the open connection to `url`, or open one.
     async fn connection_to(&self, url: &Url) -> Result<Connection, Error> {
-        // Held while connecting, so that concurrent callers don't open duplicate connections.
-        let mut connections = self.inner.connections.lock().await;
-        if let Some(conn) = connections.get(url)
+        let slot = lock(&self.inner.connections)
+            .entry(url.clone())
+            .or_default()
+            .clone();
+        let mut slot = slot.lock().await;
+        if let Some(conn) = slot.as_ref()
             && !conn.is_closed()
         {
             return Ok(conn.clone());
@@ -265,7 +278,7 @@ impl Household {
             self.inner.topology.clone(),
             self.inner.events_tx.clone(),
         );
-        connections.insert(url.clone(), conn.clone());
+        *slot = Some(conn.clone());
         Ok(conn)
     }
 }
@@ -307,7 +320,7 @@ mod tests {
     use serde_json::{Value, json};
 
     use super::*;
-    use crate::test_support::{FakePlayer, reply};
+    use crate::test_support::{self, FakePlayer, reply};
 
     /// Commands received by a fake player, as `namespace:command:target`.
     type Log = Arc<Mutex<Vec<String>>>;
@@ -395,7 +408,9 @@ mod tests {
             "players": players,
         });
         let (log_a, log_b) = (Log::default(), Log::default());
-        let options = ConnectOptions::default().request_timeout(Duration::from_millis(500));
+        let options = ConnectOptions::default()
+            .request_timeout(Duration::from_millis(500))
+            .connect_timeout(Duration::from_millis(500));
         let url_a = a.url();
         a.serve(handler(
             log_a.clone(),
@@ -411,7 +426,24 @@ mod tests {
         .await
         .unwrap();
         let household = Household::with_options(conn, options).await.unwrap();
+        settle(&household).await;
         (household, log_a, log_b)
+    }
+
+    /// Wait for the `groups` event sent when the household subscribed to the topology to be
+    /// applied, so that tests changing the topology don't race with it.
+    async fn settle(household: &Household) {
+        let renamed = |topology: &Topology| {
+            topology
+                .groups
+                .get(&GroupId::new("A:1"))
+                .is_some_and(|group| group.name == "Kitchen (renamed)")
+        };
+        let mut topology = household.topology_updates();
+        tokio::time::timeout(Duration::from_secs(2), topology.wait_for(renamed))
+            .await
+            .expect("topology was not updated")
+            .unwrap();
     }
 
     fn logged(log: &Log) -> Vec<String> {
@@ -457,6 +489,39 @@ mod tests {
             logged(&log_b),
             ["groupVolume:setVolume:B:1", "playerVolume:setMute:B"]
         );
+    }
+
+    #[tokio::test]
+    async fn connects_to_players_independently() {
+        let (household, _, log_b) = household().await;
+        let (url_c, _server) = test_support::stalled_player().await;
+        household.inner.topology.send_modify(|topology| {
+            topology.update(
+                serde_json::from_value(json!({
+                    "groups": [group("C:1", "Garage", "C")],
+                    "players": [player("C", &url_c)],
+                    "partial": true,
+                }))
+                .unwrap(),
+            )
+        });
+
+        let stuck = tokio::spawn({
+            let household = household.clone();
+            async move { household.player(&PlayerId::new("C")).await }
+        });
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let set_volume = async {
+            let group = household.group(&GroupId::new("B:1")).await?;
+            group.set_volume(10).await
+        };
+        tokio::time::timeout(Duration::from_millis(200), set_volume)
+            .await
+            .expect("held up by the connection to C")
+            .unwrap();
+        assert_eq!(logged(&log_b), ["groupVolume:setVolume:B:1"]);
+        let err = stuck.await.unwrap().unwrap_err();
+        assert!(matches!(err, Error::Connect(_)), "{err:?}");
     }
 
     #[tokio::test]
