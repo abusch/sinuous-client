@@ -43,7 +43,8 @@ impl FakePlayer {
 
     /// Accept a single connection, answering each command with `handler(header, body)` (or not at
     /// all if it returns `None`), after an optional delay given by the command's `delay`
-    /// parameter.
+    /// parameter. A number among the messages the handler returns is a pause, in milliseconds,
+    /// before sending the next ones.
     pub fn serve(self, handler: impl Handler) -> JoinHandle<()> {
         tokio::spawn(async move {
             let (stream, _) = self.listener.accept().await.unwrap();
@@ -171,6 +172,10 @@ async fn serve_connection(
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(delay)).await;
             for reply in replies {
+                if let Some(pause) = reply.as_u64() {
+                    tokio::time::sleep(Duration::from_millis(pause)).await;
+                    continue;
+                }
                 let text = Message::text(reply.to_string());
                 // The connection may have been dropped in the meantime.
                 if write.lock().await.send(text).await.is_err() {
