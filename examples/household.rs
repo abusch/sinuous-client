@@ -90,8 +90,17 @@ async fn main() -> anyhow::Result<()> {
     }
 
     for p in &topology.players {
-        let volume = household.player(&p.id).await?.get_volume().await?;
-        println!("Player {} volume: {}", p.name, volume.volume);
+        let player = household.player(&p.id).await?;
+        let volume = player.get_volume().await?;
+        print!("Player {} volume: {}", p.name, volume.volume);
+        // Only portable players have a battery: the others reject the command.
+        match player.get_battery_status().await {
+            Ok(battery) => println!(
+                ", battery {}% ({:?})",
+                battery.battery_percentage, battery.charging_state
+            ),
+            Err(_) => println!(),
+        }
     }
 
     let conn = household.connection().await?;
