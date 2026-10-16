@@ -64,6 +64,7 @@ pub mod history;
 pub mod home_theater;
 mod household;
 mod ids;
+mod iso_duration;
 pub mod playback;
 pub mod playback_metadata;
 pub mod playlists;
