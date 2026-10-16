@@ -46,6 +46,12 @@
 //! ```
 //!
 //! [process-wide default]: rustls::crypto::CryptoProvider#using-the-per-process-default-cryptoprovider
+//!
+//! ## Cargo features
+//!
+//! - `upnp`: read a group's queue (`GroupHandle::get_queue`), which the websocket API doesn't
+//!   expose, from the players' UPnP interface. Off by default, as it pulls in an HTTP client and
+//!   an XML parser.
 
 mod connection;
 mod discovery;
@@ -60,10 +66,14 @@ pub mod playback;
 pub mod playback_metadata;
 pub mod playlists;
 mod protocol;
+#[cfg(feature = "upnp")]
+pub mod queue;
 pub mod sleep_timer;
 #[cfg(test)]
 mod test_support;
 mod tls;
+#[cfg(feature = "upnp")]
+mod upnp;
 pub mod volume;
 
 pub use connection::{ConnectOptions, Connection, DEFAULT_API_KEY, GroupHandle, PlayerHandle};

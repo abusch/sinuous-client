@@ -12,6 +12,9 @@ categories = ["api-bindings", "multimedia::audio", "network-programming"]
 [dependencies]
 futures-util = "0.3.31"
 iddqd = "0.5"
+# Without default features: plain HTTP (UPnP isn't served over TLS), and no system proxy.
+reqwest = { version = "0.13.5", default-features = false, optional = true }
+roxmltree = { version = "0.21.1", default-features = false, features = ["std"], optional = true }
 rustls = { version = "0.23", default-features = false, features = ["std", "tls12"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0.145"
@@ -26,5 +29,12 @@ url = { version = "2.5.7", features = ["serde"] }
 [dev-dependencies]
 anyhow = "1.0.100"
 rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs"] }
-tokio = { version = "1.53.2", features = ["macros", "rt-multi-thread"] }
+tokio = { version = "1.53.2", features = ["io-util", "macros", "rt-multi-thread"] }
 tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
+
+[features]
+# Reading a group's queue, which is only available over the players' UPnP interface.
+upnp = ["dep:reqwest", "dep:roxmltree"]
+
+[package.metadata.docs.rs]
+all-features = true
