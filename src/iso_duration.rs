@@ -31,6 +31,14 @@ pub(crate) fn parse(text: &str) -> Option<Duration> {
     Some(total)
 }
 
+/// For `#[serde(deserialize_with)]`.
+pub(crate) fn deserialize<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Duration, D::Error> {
+    let text = String::deserialize(deserializer)?;
+    parse(&text).ok_or_else(|| D::Error::custom(format!("invalid duration {text:?}")))
+}
+
 /// For `#[serde(deserialize_with)]`, on an `Option<Duration>` (which also needs `#[serde(default)]`).
 pub(crate) fn deserialize_option<'de, D: Deserializer<'de>>(
     deserializer: D,

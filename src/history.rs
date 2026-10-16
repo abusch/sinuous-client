@@ -69,6 +69,8 @@ pub enum ContentType {
     Playlist,
     /// A radio station or show, e.g. Sonos Radio or a Spotify artist radio.
     Program,
+    /// e.g. the Sonos chime of an [alarm](crate::alarms::AlarmContent).
+    Other,
     /// A content type this crate doesn't know about yet.
     #[serde(other)]
     Unknown,

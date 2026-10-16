@@ -53,6 +53,7 @@
 //!   expose, from the players' UPnP interface. Off by default, as it pulls in an HTTP client and
 //!   an XML parser.
 
+pub mod alarms;
 mod connection;
 mod discovery;
 mod error;
@@ -84,7 +85,7 @@ pub use discovery::{DiscoveredGroup, DiscoveredPlayer, Discovery, discover, disc
 pub use error::{ApiError, Error};
 pub use events::{Event, EventPayload, Subscription};
 pub use household::{Household, Topology};
-pub use ids::{FavoriteId, GroupId, HouseholdId, PlayerId, PlaylistId};
+pub use ids::{AlarmId, FavoriteId, GroupId, HouseholdId, PlayerId, PlaylistId};
 
 // Check that the README example compiles.
 #[cfg(doctest)]

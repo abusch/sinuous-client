@@ -334,7 +334,8 @@ impl Household {
             Subscription::Groups
             | Subscription::Favorites
             | Subscription::Playlists
-            | Subscription::History => Ok(self.inner.primary_url.clone()),
+            | Subscription::History
+            | Subscription::Alarms => Ok(self.inner.primary_url.clone()),
             Subscription::Playback(id)
             | Subscription::PlaybackMetadata(id)
             | Subscription::GroupVolume(id)
@@ -678,7 +679,10 @@ async fn restore(household: Weak<Inner>, mut subscriptions: Vec<Subscription>) {
     // `Groups` first, so that the topology used to route the others is up to date.
     subscriptions.sort_by_key(|subscription| match subscription {
         Subscription::Groups => 0,
-        Subscription::Favorites | Subscription::Playlists | Subscription::History => 1,
+        Subscription::Favorites
+        | Subscription::Playlists
+        | Subscription::History
+        | Subscription::Alarms => 1,
         _ => 2,
     });
 

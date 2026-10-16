@@ -115,6 +115,23 @@ async fn main() -> anyhow::Result<()> {
         let playlist = conn.get_playlist(&p.id).await?;
         println!("\t{} [{}]: {} tracks", p.name, p.id, playlist.tracks.len());
     }
+    let alarms = conn.get_alarms().await?;
+    println!("Alarms:");
+    for alarm in &alarms.alarms {
+        let description = &alarm.description;
+        let player = description
+            .actuator
+            .player_id()
+            .and_then(|id| topology.players.get(&id))
+            .map(|p| p.name.as_str());
+        println!(
+            "\t{} {:?} {:?} on {player:?}{}",
+            description.start_time,
+            description.recurrence.frequency,
+            description.recurrence.days,
+            if alarm.enabled { "" } else { " (disabled)" },
+        );
+    }
     let history = conn.get_history().await?;
     println!("Recently played ({} items):", history.info.total);
     for item in history.items.iter().take(5) {
