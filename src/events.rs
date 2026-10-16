@@ -7,6 +7,7 @@ use tracing::warn;
 use crate::{
     Connection, Error, GroupId, HouseholdId, PlayerId,
     groups::{GroupCoordinatorChanged, Groups},
+    hardware_status::BatteryStatus,
     home_theater::HomeTheaterOptions,
     playback::{PlaybackError, PlaybackStatus},
     playback_metadata::MetadataStatus,
@@ -43,6 +44,7 @@ pub enum EventPayload {
     PlayerVolume(Volume),
     HomeTheaterOptions(HomeTheaterOptions),
     SleepTimerStatus(SleepTimerStatus),
+    BatteryStatus(BatteryStatus),
     /// The favorites, playlists or history (see [`Event::namespace`]) have changed.
     VersionChanged(VersionChanged),
     GroupCoordinatorChanged(GroupCoordinatorChanged),
@@ -64,6 +66,7 @@ impl EventPayload {
             "playerVolume" => decode(body, Self::PlayerVolume),
             "homeTheaterOptions" => decode(body, Self::HomeTheaterOptions),
             "sleepTimerStatus" => decode(body, Self::SleepTimerStatus),
+            "battery" => decode(body, Self::BatteryStatus),
             "versionChanged" => decode(body, Self::VersionChanged),
             "groupCoordinatorChanged" => decode(body, Self::GroupCoordinatorChanged),
             _ => Self::Unknown(body),
@@ -105,6 +108,8 @@ pub enum Subscription {
     SleepTimer(GroupId),
     PlayerVolume(PlayerId),
     HomeTheater(PlayerId),
+    /// Battery events from a portable player, plus Wi-Fi and Bluetooth ones.
+    HardwareStatus(PlayerId),
 }
 
 impl Subscription {
@@ -120,6 +125,7 @@ impl Subscription {
             Self::SleepTimer(_) => "sleepTimer",
             Self::PlayerVolume(_) => "playerVolume",
             Self::HomeTheater(_) => "homeTheater",
+            Self::HardwareStatus(_) => "hardwareStatus",
         }
     }
 
@@ -143,7 +149,9 @@ impl Subscription {
             | Self::PlaybackMetadata(id)
             | Self::GroupVolume(id)
             | Self::SleepTimer(id) => Target::Group(id),
-            Self::PlayerVolume(id) | Self::HomeTheater(id) => Target::Player(id),
+            Self::PlayerVolume(id) | Self::HomeTheater(id) | Self::HardwareStatus(id) => {
+                Target::Player(id)
+            }
         }
     }
 }
@@ -202,6 +210,15 @@ mod tests {
             panic!("expected version changed");
         };
         assert_eq!(changed.version, "RINCON_5:19");
+    }
+
+    #[test]
+    fn decodes_battery_status() {
+        let body = json!({"_objectType": "battery", "batteryPercentage": 100.0, "chargingState": "CHARGING", "validCharger": "VALID"});
+        let EventPayload::BatteryStatus(status) = EventPayload::from_body(body) else {
+            panic!("expected battery status");
+        };
+        assert_eq!(status.battery_percentage, 100.0);
     }
 
     #[test]
