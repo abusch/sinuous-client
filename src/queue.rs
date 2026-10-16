@@ -11,6 +11,7 @@
 
 use std::time::Duration;
 
+use tracing::debug;
 use url::Url;
 
 use crate::{
@@ -30,27 +31,16 @@ impl GroupHandle {
     ///
     /// The queue may not be what the group is playing: see [`Queue::is_current`].
     ///
+    /// Large queues are read a page at a time, starting over if the queue changes in the meantime.
+    /// If it keeps changing, this gives up after a few attempts and returns the tracks read so
+    /// far, fewer than [`Queue::total`].
+    ///
     /// Like other group commands, this must be sent through the group coordinator's connection
     /// (which [`Household::group`](crate::Household::group) does): other players return their own
     /// queue, which isn't the one being played.
     pub async fn get_queue(&self) -> Result<Queue, Error> {
         let control_url = CONTENT_DIRECTORY.control_url(self.conn.websocket_url())?;
-        let timeout = self.conn.request_timeout();
-        let mut queue = browse(&control_url, 0, 0, timeout).await?;
-        // Players may return fewer tracks than asked for: get the rest. If the queue changes in
-        // the meantime, start over so as not to mix two versions.
-        while queue.items.len() < queue.total as usize {
-            let page = browse(&control_url, queue.items.len() as u32, 0, timeout).await?;
-            if page.version != queue.version {
-                queue = browse(&control_url, 0, 0, timeout).await?;
-            } else if page.items.is_empty() {
-                break;
-            } else {
-                queue.items.extend(page.items);
-                queue.total = page.total;
-            }
-        }
-        Ok(queue)
+        read_queue(&control_url, self.conn.request_timeout()).await
     }
 
     /// Get up to `count` tracks of the group's queue, starting with the one at index `start`
@@ -103,6 +93,34 @@ pub struct QueueEntry {
     pub duration_millis: Option<u64>,
     /// The URI the player plays the track from, e.g. `x-sonos-spotify:spotify%3atrack%3a...`.
     pub uri: Option<String>,
+}
+
+/// How many times [`read_queue`] reads a queue that changes while it's being read.
+const MAX_QUEUE_READS: usize = 3;
+
+/// Read the whole queue, a page at a time.
+async fn read_queue(control_url: &Url, timeout: Duration) -> Result<Queue, Error> {
+    let mut queue = browse(control_url, 0, 0, timeout).await?;
+    let mut reads = 1;
+    // Players may return fewer tracks than asked for: get the rest. If the queue changes in the
+    // meantime, start over so as not to mix two versions.
+    while queue.items.len() < queue.total as usize {
+        let page = browse(control_url, queue.items.len() as u32, 0, timeout).await?;
+        if page.version != queue.version {
+            if reads == MAX_QUEUE_READS {
+                debug!("Queue keeps changing, giving up after {reads} attempts");
+                break;
+            }
+            queue = browse(control_url, 0, 0, timeout).await?;
+            reads += 1;
+        } else if page.items.is_empty() {
+            break;
+        } else {
+            queue.items.extend(page.items);
+            queue.total = page.total;
+        }
+    }
+    Ok(queue)
 }
 
 async fn browse(
@@ -294,6 +312,62 @@ mod tests {
         assert_eq!(queue.items[1].position, 2);
         assert_eq!(queue.items[1].name.as_deref(), Some("Contemplation"));
         assert_eq!(queue.items[1].duration_millis, None);
+    }
+
+    /// Answer every request with two tracks of a queue of `total`, at `version(request number)`.
+    /// Returns where to send requests, and the number of requests answered.
+    async fn fake_queue(
+        total: u32,
+        version: impl Fn(usize) -> usize + Send + 'static,
+    ) -> (Url, Arc<Mutex<usize>>) {
+        let requests = Arc::new(Mutex::new(0));
+        let addr = fake_upnp_player({
+            let requests = requests.clone();
+            move |_| {
+                let mut requests = requests.lock().unwrap();
+                let response = RESPONSE
+                    .replace("<TotalMatches>8<", &format!("<TotalMatches>{total}<"))
+                    .replace(
+                        "<UpdateID>4<",
+                        &format!("<UpdateID>{}<", version(*requests)),
+                    );
+                *requests += 1;
+                ("200 OK", response)
+            }
+        })
+        .await;
+        (control_url(addr), requests)
+    }
+
+    #[tokio::test]
+    async fn reads_the_queue_a_page_at_a_time() {
+        let (url, requests) = fake_queue(6, |_| 4).await;
+        let queue = read_queue(&url, Duration::from_secs(1)).await.unwrap();
+        assert_eq!(queue.items.len(), 6);
+        assert_eq!(queue.version, "4");
+        assert_eq!(*requests.lock().unwrap(), 3);
+    }
+
+    #[tokio::test]
+    async fn starts_over_when_the_queue_changes() {
+        // Changes after the first page only.
+        let (url, requests) = fake_queue(4, |request| if request == 0 { 4 } else { 5 }).await;
+        let queue = read_queue(&url, Duration::from_secs(1)).await.unwrap();
+        assert_eq!(queue.items.len(), 4);
+        assert_eq!(queue.version, "5");
+        // First page, second page (changed), first page again, second page.
+        assert_eq!(*requests.lock().unwrap(), 4);
+    }
+
+    #[tokio::test]
+    async fn gives_up_on_a_queue_that_keeps_changing() {
+        let (url, requests) = fake_queue(8, |request| request).await;
+        let queue = read_queue(&url, Duration::from_secs(1)).await.unwrap();
+        // What was read of the latest version.
+        assert_eq!(queue.items.len(), 2);
+        assert_eq!(queue.total, 8);
+        assert_eq!(queue.version, "4");
+        assert_eq!(*requests.lock().unwrap(), 2 * MAX_QUEUE_READS);
     }
 
     #[tokio::test]

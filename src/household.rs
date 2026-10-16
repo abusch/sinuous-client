@@ -250,10 +250,35 @@ impl Household {
     /// group if the group moves; see [Lost connections](Household#lost-connections).
     pub async fn subscribe(&self, subscription: &Subscription) -> Result<(), Error> {
         let conn = self.connection_to(&self.route(subscription)?).await?;
-        conn.subscribe(subscription).await?;
-        lock(&self.inner.subscriptions).insert(subscription.clone(), SentTo::new(&conn));
-        self.restore_if_closed(&conn);
-        Ok(())
+        // Recorded before it's sent, so that it's followed if its group moves (or restored if the
+        // connection is lost) as soon as the player has it.
+        let previous =
+            lock(&self.inner.subscriptions).insert(subscription.clone(), SentTo::new(&conn));
+        let result = conn.subscribe(subscription).await;
+        if result.is_err() {
+            let mut subscriptions = lock(&self.inner.subscriptions);
+            match subscriptions
+                .get(subscription)
+                .map(|sent_to| sent_to.connection)
+            {
+                // Still as recorded: undo it.
+                Some(Some(id)) if id == conn.id() => match previous {
+                    Some(previous) => {
+                        subscriptions.insert(subscription.clone(), previous);
+                    }
+                    None => {
+                        subscriptions.remove(subscription);
+                    }
+                },
+                // Being restored, e.g. the connection was lost: don't.
+                Some(None) => {
+                    subscriptions.remove(subscription);
+                }
+                // Sent again since, or unsubscribed.
+                _ => {}
+            }
+        }
+        result
     }
 
     /// Stop receiving events for a subscription.
@@ -435,8 +460,8 @@ impl Household {
 
     /// Restore the subscriptions sent on `conn` if it is closed already.
     ///
-    /// Called after recording a subscription: if the connection closed in the meantime, its
-    /// watch task may have looked for subscriptions to restore before this one was recorded.
+    /// Called after recording a restored subscription: if the connection closed in the meantime,
+    /// its watch task may have looked for subscriptions to restore before this one was recorded.
     fn restore_if_closed(&self, conn: &Connection) {
         if conn.is_closed() {
             tokio::spawn(restore_lost(
@@ -747,6 +772,9 @@ mod tests {
         /// Groups that moved to another coordinator, by ID, with the new coordinator's websocket
         /// URL.
         moves: Mutex<HashMap<String, Url>>,
+        /// How long to wait before answering commands, in milliseconds, as
+        /// `namespace:command:target`.
+        reply_delays: Mutex<HashMap<String, u64>>,
     }
 
     /// A `groupCoordinatorChanged` event for group `B:1`.
@@ -824,6 +852,9 @@ mod tests {
                     {"_objectType": "groupVolume", "volume": 10, "muted": false}
                 ])),
                 _ => {}
+            }
+            if let Some(delay) = behavior.reply_delays.lock().unwrap().get(&logged) {
+                replies.insert(0, json!(delay));
             }
             Some(replies)
         }
@@ -1477,6 +1508,80 @@ mod tests {
         b.drop_connections();
         tokio::time::sleep(Duration::from_millis(100)).await;
         assert_eq!(b.accepted(), 1);
+    }
+
+    #[tokio::test]
+    async fn follows_groups_that_move_while_subscribing() {
+        let Fixture {
+            household,
+            b,
+            log_a,
+            behavior,
+            ..
+        } = fixture().await;
+        let subscription = Subscription::GroupVolume(GroupId::new("B:1"));
+        behavior
+            .reply_delays
+            .lock()
+            .unwrap()
+            .insert("groupVolume:subscribe:B:1".to_owned(), 200);
+
+        let subscribing = tokio::spawn({
+            let household = household.clone();
+            let subscription = subscription.clone();
+            async move { household.subscribe(&subscription).await }
+        });
+        // `B` has the subscription, but hasn't acknowledged it yet when `A` takes over the group.
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let url_a = household.inner.primary_url.clone();
+        behavior
+            .moves
+            .lock()
+            .unwrap()
+            .insert("B:1".to_owned(), url_a.clone());
+        b.push(coordinator_changed(GroupStatus::Moved, Some(&url_a)));
+
+        subscribing.await.unwrap().unwrap();
+        wait_for_logged(&log_a, "groupVolume:subscribe:B:1", 1).await;
+        assert!(household.subscriptions().contains(&subscription));
+    }
+
+    #[tokio::test]
+    async fn forgets_subscriptions_the_player_rejects() {
+        let Fixture {
+            household,
+            behavior,
+            ..
+        } = fixture().await;
+        behavior
+            .rejected
+            .lock()
+            .unwrap()
+            .insert("playerVolume:subscribe:B".to_owned());
+        let err = household
+            .subscribe(&Subscription::PlayerVolume(PlayerId::new("B")))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, Error::Api(_)), "{err:?}");
+        assert_eq!(household.subscriptions(), [Subscription::Groups]);
+    }
+
+    #[tokio::test]
+    async fn keeps_subscriptions_when_subscribing_again_fails() {
+        let Fixture {
+            household,
+            behavior,
+            ..
+        } = fixture().await;
+        let subscription = Subscription::PlayerVolume(PlayerId::new("B"));
+        household.subscribe(&subscription).await.unwrap();
+        behavior
+            .rejected
+            .lock()
+            .unwrap()
+            .insert("playerVolume:subscribe:B".to_owned());
+        household.subscribe(&subscription).await.unwrap_err();
+        assert!(household.subscriptions().contains(&subscription));
     }
 
     #[tokio::test]
