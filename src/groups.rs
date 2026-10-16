@@ -5,7 +5,9 @@ use serde::{Deserialize, Serialize};
 use url::Url;
 
 use crate::{
-    Connection, Error, GroupHandle, GroupId, PlayerId, playback::PlaybackState, protocol::NoParams,
+    Connection, Error, GroupHandle, GroupId, PlayerId,
+    playback::PlaybackState,
+    protocol::{NoParams, skip_invalid},
 };
 
 const NAMESPACE: &str = "groups";
@@ -99,7 +101,11 @@ impl GroupHandle {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "_objectType", rename_all = "camelCase")]
 pub struct Groups {
+    /// Groups that can't be decoded are left out, with a warning.
+    #[serde(deserialize_with = "skip_invalid")]
     pub groups: Vec<Group>,
+    /// Players that can't be decoded are left out, with a warning.
+    #[serde(deserialize_with = "skip_invalid")]
     pub players: Vec<Player>,
     /// Set when the player's view of the household is incomplete, e.g. while players are still
     /// being discovered.
@@ -137,15 +143,25 @@ impl IdHashItem for Group {
 #[serde(tag = "_objectType", rename_all = "camelCase")]
 pub struct Player {
     pub id: PlayerId,
+    #[serde(default)]
     pub name: String,
     /// Connect here to control groups this player coordinates.
     pub websocket_url: Url,
+    /// Empty if the player didn't say, like the other strings below.
+    #[serde(default)]
     pub api_version: String,
+    #[serde(default)]
     pub min_api_version: String,
+    #[serde(default)]
     pub software_version: String,
+    #[serde(default)]
     pub capabilities: Capabilities,
+    #[serde(default)]
     pub is_unregistered: bool,
+    #[serde(default)]
     pub device_ids: Vec<PlayerId>,
+    /// Devices that can't be decoded are left out, with a warning.
+    #[serde(default, deserialize_with = "skip_invalid")]
     pub devices: Vec<DeviceInfo>,
     // TODO: zone info?
 }
@@ -164,22 +180,34 @@ impl IdHashItem for Player {
 #[serde(tag = "_objectType", rename_all = "camelCase")]
 pub struct DeviceInfo {
     pub id: PlayerId,
+    /// Empty if the device didn't say, like the other strings below.
+    #[serde(default)]
     pub name: String,
+    #[serde(default)]
     pub serial_number: String,
+    #[serde(default)]
     pub model: String,
+    #[serde(default)]
     pub model_display_name: String,
     pub color: Option<String>,
+    #[serde(default)]
     pub capabilities: Capabilities,
+    #[serde(default)]
     pub api_version: String,
+    #[serde(default)]
     pub min_api_version: String,
     pub websocket_url: Url,
+    #[serde(default)]
     pub software_version: String,
+    #[serde(default)]
     pub hw_version: String,
+    /// 0 if the device didn't say.
+    #[serde(default)]
     pub sw_gen: u64,
     // TODO: versions, quarantine_reasons
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
 pub struct Capabilities(Vec<Capability>);
 
 impl Capabilities {
@@ -257,7 +285,57 @@ pub enum GroupStatus {
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
+
     use super::*;
+
+    #[test]
+    fn decodes_players_with_few_details() {
+        let groups: Groups = serde_json::from_value(json!({
+            "_objectType": "groups",
+            "groups": [
+                {"_objectType": "group", "id": "A:1", "name": "Kitchen", "coordinatorId": "A",
+                 "playerIds": ["A"]}
+            ],
+            "players": [
+                {"_objectType": "player", "id": "A",
+                 "websocketUrl": "wss://10.0.0.1:1443/websocket/api",
+                 "devices": [{"_objectType": "deviceInfo", "id": "A",
+                              "websocketUrl": "wss://10.0.0.1:1443/websocket/api"}]}
+            ]
+        }))
+        .unwrap();
+        let player = &groups.players[0];
+        assert_eq!(player.id, PlayerId::new("A"));
+        assert_eq!(player.software_version, "");
+        assert!(!player.is_unregistered);
+        assert_eq!(player.capabilities.iter().count(), 0);
+        assert_eq!(player.devices[0].sw_gen, 0);
+    }
+
+    #[test]
+    fn skips_what_cannot_be_decoded() {
+        let groups: Groups = serde_json::from_value(json!({
+            "_objectType": "groups",
+            "groups": [
+                {"_objectType": "group", "id": "A:1", "name": "Kitchen", "coordinatorId": "A",
+                 "playerIds": ["A"]},
+                {"_objectType": "group", "id": "B:1", "name": "Office"}
+            ],
+            "players": [
+                {"_objectType": "player", "id": "A",
+                 "websocketUrl": "wss://10.0.0.1:1443/websocket/api",
+                 "devices": [{"_objectType": "deviceInfo", "id": "A"}]},
+                {"_objectType": "player", "id": "B", "websocketUrl": "not a url"}
+            ]
+        }))
+        .unwrap();
+        let group_ids: Vec<_> = groups.groups.iter().map(|g| g.id.as_str()).collect();
+        assert_eq!(group_ids, ["A:1"]);
+        let player_ids: Vec<_> = groups.players.iter().map(|p| p.id.as_str()).collect();
+        assert_eq!(player_ids, ["A"]);
+        assert!(groups.players[0].devices.is_empty());
+    }
 
     #[test]
     fn unknown_capabilities_do_not_fail_decoding() {

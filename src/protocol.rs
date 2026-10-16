@@ -9,8 +9,9 @@
 //!   `groupCoordinatorChanged` object when `success` is false.
 //! * Events carry `name` in the header and the event object in the body.
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, de::DeserializeOwned};
 use serde_json::Value;
+use tracing::warn;
 
 use crate::{
     Error, GroupId, HouseholdId, PlayerId,
@@ -144,6 +145,26 @@ fn failure(body: Value) -> Error {
 
 pub(crate) fn object_type(body: &Value) -> Option<&str> {
     body.get("_objectType").and_then(Value::as_str)
+}
+
+/// For `#[serde(deserialize_with)]`: decode a list, skipping (with a warning) the items that
+/// can't be decoded instead of failing the whole list.
+pub(crate) fn skip_invalid<'de, D, T>(deserializer: D) -> Result<Vec<T>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: DeserializeOwned,
+{
+    let items = Vec::<Value>::deserialize(deserializer)?;
+    Ok(items
+        .into_iter()
+        .filter_map(|item| match T::deserialize(&item) {
+            Ok(item) => Some(item),
+            Err(e) => {
+                warn!("Skipping invalid {:?}: {e}: {item}", object_type(&item));
+                None
+            }
+        })
+        .collect())
 }
 
 #[cfg(test)]
