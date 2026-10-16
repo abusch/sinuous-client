@@ -172,18 +172,23 @@ fn parse_duration_millis(text: &str) -> Option<u64> {
     let mut parts = text.splitn(3, ':');
     let (hours, minutes, seconds) = (parts.next()?, parts.next()?, parts.next()?);
     let (seconds, fraction) = seconds.split_once('.').unwrap_or((seconds, ""));
-    let millis = match fraction.len() {
+    // Also makes slicing it by bytes safe.
+    if !fraction.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    // Only keep milliseconds.
+    let digits = &fraction[..fraction.len().min(3)];
+    let millis = match digits.len() {
         0 => 0,
-        // Only keep milliseconds.
-        n => {
-            let digits = &fraction[..n.min(3)];
-            digits.parse::<u64>().ok()? * 10u64.pow(3 - digits.len() as u32)
-        }
+        n => digits.parse::<u64>().ok()? * 10u64.pow(3 - n as u32),
     };
-    let seconds = hours.parse::<u64>().ok()? * 3600
-        + minutes.parse::<u64>().ok()? * 60
-        + seconds.parse::<u64>().ok()?;
-    Some(seconds * 1000 + millis)
+    let seconds = hours
+        .parse::<u64>()
+        .ok()?
+        .checked_mul(3600)?
+        .checked_add(minutes.parse::<u64>().ok()?.checked_mul(60)?)?
+        .checked_add(seconds.parse().ok()?)?;
+    seconds.checked_mul(1000)?.checked_add(millis)
 }
 
 #[cfg(test)]
@@ -348,6 +353,10 @@ mod tests {
         assert_eq!(parse_duration_millis("0:00:01.123456"), Some(1_123));
         assert_eq!(parse_duration_millis("NOT_IMPLEMENTED"), None);
         assert_eq!(parse_duration_millis("0:05"), None);
+        assert_eq!(parse_duration_millis("0:00:01.éé"), None);
+        assert_eq!(parse_duration_millis("0:00:01.5x"), None);
+        assert_eq!(parse_duration_millis("99999999999999999:00:00"), None);
+        assert_eq!(parse_duration_millis(&format!("0:00:{}", u64::MAX)), None);
     }
 
     #[test]

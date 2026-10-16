@@ -1,5 +1,6 @@
 use std::{
     collections::HashMap,
+    net::IpAddr,
     sync::{
         Arc, Mutex, PoisonError,
         atomic::{AtomicU64, Ordering},
@@ -135,18 +136,16 @@ impl Drop for Inner {
 }
 
 impl Connection {
-    /// Connect to the player at `host` (a hostname or IP address) with default options.
+    /// Connect to the player at `host` (a hostname or IP address, without a port) with default
+    /// options.
     pub async fn connect(host: &str) -> Result<Self, Error> {
         Self::connect_with_options(host, ConnectOptions::default()).await
     }
 
-    /// Connect to the player at `host` (a hostname or IP address).
+    /// Connect to the player at `host` (a hostname or IP address, without a port). IPv6
+    /// addresses may be given with or without brackets.
     pub async fn connect_with_options(host: &str, options: ConnectOptions) -> Result<Self, Error> {
-        let mut websocket_url =
-            Url::parse("wss://localhost:1443/websocket/api").expect("valid static URL");
-        websocket_url
-            .set_host(Some(host))
-            .map_err(|e| Error::Connect(Box::new(e)))?;
+        let websocket_url = websocket_url(host).map_err(|e| Error::Connect(Box::new(e)))?;
         Self::connect_to(&websocket_url, options).await
     }
 
@@ -357,6 +356,27 @@ impl Connection {
     }
 }
 
+#[derive(Debug, thiserror::Error)]
+#[error("invalid host {0:?}: expected a hostname or an IP address, without a port")]
+struct InvalidHost(String);
+
+/// The websocket URL of the player at `host`.
+fn websocket_url(host: &str) -> Result<Url, InvalidHost> {
+    let mut url = Url::parse("wss://localhost:1443/websocket/api").expect("valid static URL");
+    let unbracketed = host
+        .strip_prefix('[')
+        .and_then(|host| host.strip_suffix(']'))
+        .unwrap_or(host);
+    let result = match unbracketed.parse::<IpAddr>() {
+        Ok(ip) => url.set_ip_host(ip),
+        // `set_host` would take what follows the colon for a port, and ignore it.
+        Err(_) if host.contains(':') => Err(()),
+        Err(_) => url.set_host(Some(host)).map_err(|_| ()),
+    };
+    result.map_err(|()| InvalidHost(host.to_owned()))?;
+    Ok(url)
+}
+
 /// Learn which household the player belongs to.
 ///
 /// There is no command for this (`getHouseholds` isn't supported locally), but players include
@@ -562,6 +582,34 @@ mod tests {
             .request_timeout(Duration::from_millis(500))
             .household_id(HouseholdId::new("Sonos_1"));
         Connection::connect_to(&url(addr), options).await.unwrap()
+    }
+
+    #[test]
+    fn builds_websocket_urls_from_hosts() {
+        for (host, expected) in [
+            ("10.10.190.82", "wss://10.10.190.82:1443/websocket/api"),
+            (
+                "sonos-living-room.local",
+                "wss://sonos-living-room.local:1443/websocket/api",
+            ),
+            ("fe80::1", "wss://[fe80::1]:1443/websocket/api"),
+            ("[fe80::1]", "wss://[fe80::1]:1443/websocket/api"),
+        ] {
+            assert_eq!(websocket_url(host).unwrap().as_str(), expected, "{host:?}");
+        }
+    }
+
+    #[test]
+    fn rejects_hosts_with_a_port() {
+        for host in [
+            "10.10.190.82:1443",
+            "sonos.local:1443",
+            "[fe80::1]:1443",
+            "",
+            "a/b",
+        ] {
+            assert!(websocket_url(host).is_err(), "{host:?}");
+        }
     }
 
     #[tokio::test]
