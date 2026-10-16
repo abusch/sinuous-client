@@ -16,6 +16,7 @@ websocket API the players expose. It's the library behind
 - Find players on the network (SSDP)
 - Control groups, playback, volume, sleep timers, favorites, playlists and home theater
   settings
+- Read a group's queue (with the `upnp` feature)
 - Receive events, e.g. when playback or volume changes
 - Send each command to the player that accepts it: group commands only work on the group's
   coordinator, and player commands on the player itself
@@ -53,6 +54,12 @@ crate leaves the choice of crypto provider to your application: install one as t
 as above, or enable exactly one of rustls' `aws_lc_rs` and `ring` features.
 
 `cargo run --example household` prints a summary of the household it finds.
+
+## Cargo features
+
+- `upnp`: read a group's queue (`GroupHandle::get_queue`). The websocket API doesn't expose it,
+  so it's read from the players' UPnP interface instead, over plain HTTP. Off by default, as it
+  pulls in an HTTP client (`reqwest`) and an XML parser (`roxmltree`).
 
 ## License
 
