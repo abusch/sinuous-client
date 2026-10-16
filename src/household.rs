@@ -338,6 +338,7 @@ impl Household {
             | Subscription::Alarms => Ok(self.inner.primary_url.clone()),
             Subscription::Playback(id)
             | Subscription::PlaybackMetadata(id)
+            | Subscription::PlaybackExtended(id)
             | Subscription::GroupVolume(id)
             | Subscription::SleepTimer(id) => self.coordinator_url(id),
             Subscription::PlayerVolume(id)
