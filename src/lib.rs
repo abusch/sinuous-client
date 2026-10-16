@@ -59,6 +59,7 @@ mod error;
 pub mod events;
 pub mod favorites;
 pub mod groups;
+pub mod history;
 pub mod home_theater;
 mod household;
 mod ids;
