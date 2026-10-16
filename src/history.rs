@@ -5,7 +5,7 @@ use serde::Deserialize;
 use crate::{
     Connection, Error,
     playback_metadata::{ImageUrl, UniversalMusicObjectId},
-    protocol::NoParams,
+    protocol::{NoParams, true_bool},
 };
 
 const NAMESPACE: &str = "history";
@@ -75,10 +75,6 @@ pub enum ContentType {
 #[serde(tag = "_objectType", rename_all = "camelCase")]
 pub struct Image {
     pub url: ImageUrl,
-}
-
-fn true_bool() -> bool {
-    true
 }
 
 #[cfg(test)]

@@ -147,6 +147,11 @@ pub(crate) fn object_type(body: &Value) -> Option<&str> {
     body.get("_objectType").and_then(Value::as_str)
 }
 
+/// For `#[serde(default = "true_bool")]`.
+pub(crate) fn true_bool() -> bool {
+    true
+}
+
 /// For `#[serde(deserialize_with)]`: decode a list, skipping (with a warning) the items that
 /// can't be decoded instead of failing the whole list.
 pub(crate) fn skip_invalid<'de, D, T>(deserializer: D) -> Result<Vec<T>, D::Error>

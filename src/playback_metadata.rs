@@ -3,7 +3,10 @@
 use serde::Deserialize;
 use url::Url;
 
-use crate::{Error, GroupHandle, protocol::NoParams};
+use crate::{
+    Error, GroupHandle,
+    protocol::{NoParams, true_bool},
+};
 
 const NAMESPACE: &str = "playbackMetadata";
 
@@ -80,10 +83,6 @@ impl ImageUrl {
             Err(_) => None,
         }
     }
-}
-
-fn true_bool() -> bool {
-    true
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Deserialize)]
