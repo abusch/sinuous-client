@@ -67,3 +67,7 @@ id_type!(
     /// Identifies a Sonos playlist.
     PlaylistId
 );
+id_type!(
+    /// Identifies an alarm, e.g. `22`.
+    AlarmId
+);

@@ -7,9 +7,9 @@
 
 use std::time::Duration;
 
-use serde::{Deserialize, Deserializer, Serialize, de::Error as _};
+use serde::{Deserialize, Serialize};
 
-use crate::{Error, GroupHandle, protocol::NoParams};
+use crate::{Error, GroupHandle, iso_duration, protocol::NoParams};
 
 const NAMESPACE: &str = "sleepTimer";
 
@@ -36,7 +36,7 @@ impl GroupHandle {
                 "configureSleepTimer",
                 self.target(),
                 &Params {
-                    duration: format_duration(duration),
+                    duration: iso_duration::format(duration),
                 },
             )
             .await
@@ -65,47 +65,9 @@ pub struct SleepTimerStatus {
     #[serde(
         default,
         rename = "remainingTimeDuration",
-        deserialize_with = "deserialize_remaining"
+        deserialize_with = "iso_duration::deserialize_option"
     )]
     pub remaining: Option<Duration>,
-}
-
-fn deserialize_remaining<'de, D: Deserializer<'de>>(
-    deserializer: D,
-) -> Result<Option<Duration>, D::Error> {
-    let Some(text) = Option::<String>::deserialize(deserializer)? else {
-        return Ok(None);
-    };
-    parse_duration(&text)
-        .map(Some)
-        .ok_or_else(|| D::Error::custom(format!("invalid duration {text:?}")))
-}
-
-/// Format a duration the way players expect it, e.g. `PT1H5M7S`.
-fn format_duration(duration: Duration) -> String {
-    let secs = duration.as_secs();
-    format!("PT{}H{}M{}S", secs / 3600, secs / 60 % 60, secs % 60)
-}
-
-/// Parse an ISO 8601 duration made of hours, minutes and seconds, any of which may be left out,
-/// e.g. `PT1H5M7S` or `PT45M`.
-fn parse_duration(text: &str) -> Option<Duration> {
-    let mut rest = text.strip_prefix("PT").filter(|rest| !rest.is_empty())?;
-    let mut total = Duration::ZERO;
-    for (unit, secs) in [('H', 3600), ('M', 60)] {
-        if let Some((count, tail)) = rest.split_once(unit) {
-            let component = Duration::from_secs(count.parse::<u64>().ok()?.checked_mul(secs)?);
-            total = total.checked_add(component)?;
-            rest = tail;
-        }
-    }
-    if let Some(count) = rest.strip_suffix('S') {
-        let component = Duration::try_from_secs_f64(count.parse().ok()?).ok()?;
-        total = total.checked_add(component)?;
-    } else if !rest.is_empty() {
-        return None;
-    }
-    Some(total)
 }
 
 #[cfg(test)]
@@ -159,32 +121,6 @@ mod tests {
             "active": true
         }));
         assert!(result.is_err());
-    }
-
-    #[test]
-    fn formats_durations() {
-        assert_eq!(format_duration(Duration::from_secs(3600)), "PT1H0M0S");
-        assert_eq!(format_duration(Duration::from_secs(3907)), "PT1H5M7S");
-        assert_eq!(format_duration(Duration::from_millis(45_999)), "PT0H0M45S");
-        assert_eq!(format_duration(Duration::from_secs(86_399)), "PT23H59M59S");
-    }
-
-    #[test]
-    fn parses_durations() {
-        assert_eq!(parse_duration("PT1H5M7S"), Some(Duration::from_secs(3907)));
-        assert_eq!(parse_duration("PT45M"), Some(Duration::from_secs(2700)));
-        assert_eq!(parse_duration("PT2H"), Some(Duration::from_secs(7200)));
-        assert_eq!(parse_duration("PT1.5S"), Some(Duration::from_millis(1500)));
-        assert_eq!(parse_duration("PT0H0M0S"), Some(Duration::ZERO));
-    }
-
-    #[test]
-    fn rejects_malformed_durations() {
-        for text in [
-            "", "PT", "P1D", "1H", "PTH", "PT1X", "PT1S2M", "PT-1S", "PTinfS",
-        ] {
-            assert_eq!(parse_duration(text), None, "{text:?}");
-        }
     }
 
     #[tokio::test]
