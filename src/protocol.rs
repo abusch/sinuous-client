@@ -48,8 +48,11 @@ pub(crate) struct NoParams {}
 pub(crate) fn encode_request(
     header: &RequestHeader<'_>,
     body: &impl Serialize,
-) -> Result<String, serde_json::Error> {
-    serde_json::to_string(&(header, body))
+) -> Result<String, ProtocolError> {
+    serde_json::to_string(&(header, body)).map_err(|source| ProtocolError::Encode {
+        command: header.command,
+        source,
+    })
 }
 
 #[derive(Debug, Deserialize)]
@@ -89,6 +92,12 @@ pub(crate) enum ProtocolError {
     #[cfg(feature = "upnp")]
     #[error("failed to decode UPnP response")]
     Upnp(#[source] crate::upnp::UpnpError),
+    #[error("failed to encode `{command}`")]
+    Encode {
+        command: &'static str,
+        #[source]
+        source: serde_json::Error,
+    },
     #[error("failed to decode response to `{command}`")]
     Body {
         command: &'static str,

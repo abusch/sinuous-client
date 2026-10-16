@@ -327,8 +327,7 @@ impl Connection {
             cmd_id: &cmd_id,
             target: Some(target),
         };
-        let text = protocol::encode_request(&header, params)
-            .map_err(|source| ProtocolError::Body { command, source })?;
+        let text = protocol::encode_request(&header, params)?;
 
         let (tx, rx) = oneshot::channel();
         self.inner.pending.insert(cmd_id.clone(), tx)?;
@@ -400,11 +399,7 @@ async fn fetch_household_id(ws: &mut WsStream) -> Result<HouseholdId, Error> {
         cmd_id: HOUSEHOLD_CMD_ID,
         target: None,
     };
-    let text =
-        protocol::encode_request(&header, &NoParams {}).map_err(|source| ProtocolError::Body {
-            command: header.command,
-            source,
-        })?;
+    let text = protocol::encode_request(&header, &NoParams {})?;
     ws.send(Message::text(text))
         .await
         .map_err(|e| Error::Connect(Box::new(e)))?;
