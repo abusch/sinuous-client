@@ -37,6 +37,10 @@ pub enum Error {
     /// The player is not in the household's topology.
     #[error("unknown player {0}")]
     UnknownPlayer(PlayerId),
+    /// A request to the player's UPnP interface failed.
+    #[cfg(feature = "upnp")]
+    #[error("UPnP request failed")]
+    Upnp(#[source] BoxError),
     /// The player sent a message we could not make sense of.
     #[error("invalid message from player")]
     Protocol(#[source] BoxError),

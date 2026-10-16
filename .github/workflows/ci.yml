@@ -41,6 +41,7 @@ jobs:
           components: clippy
       - uses: Swatinem/rust-cache@v2
       - run: cargo clippy --all-targets --locked -- -D warnings
+      - run: cargo clippy --all-targets --all-features --locked -- -D warnings
 
   test:
     name: Test
@@ -52,6 +53,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --locked
+      - run: cargo test --all-features --locked
 
   # Also checks that the library builds without the dev-dependencies' rustls features, as on
   # docs.rs.
@@ -66,4 +68,4 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo doc --no-deps --locked
+      - run: cargo doc --no-deps --all-features --locked
