@@ -1,5 +1,5 @@
-//! Show the state of a household: players, groups, volumes, what's playing, favorites and
-//! playlists, then print events from all groups for a few seconds.
+//! Show the state of a household: players, groups, volumes, what's playing, favorites, playlists
+//! and recently played content, then print events from all groups for a few seconds.
 //!
 //! Only reads state, it doesn't change anything.
 //!
@@ -105,6 +105,11 @@ async fn main() -> anyhow::Result<()> {
     for p in &playlists.playlists {
         let playlist = conn.get_playlist(&p.id).await?;
         println!("\t{} [{}]: {} tracks", p.name, p.id, playlist.tracks.len());
+    }
+    let history = conn.get_history().await?;
+    println!("Recently played ({} items):", history.info.total);
+    for item in history.items.iter().take(5) {
+        println!("\t{} ({:?})", item.name, item.r#type);
     }
 
     // Events from every group, whichever player coordinates it.
