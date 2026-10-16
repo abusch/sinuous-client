@@ -8,8 +8,7 @@ const NAMESPACE: &str = "playback";
 
 impl GroupHandle {
     pub async fn get_playback_status(&self) -> Result<PlaybackStatus, Error> {
-        self.conn
-            .request(NAMESPACE, "getPlaybackStatus", self.target(), &NoParams {})
+        self.request(NAMESPACE, "getPlaybackStatus", &NoParams {})
             .await
     }
 
@@ -45,17 +44,15 @@ impl GroupHandle {
             item_id: Option<&'a str>,
         }
 
-        self.conn
-            .command(
-                NAMESPACE,
-                "seek",
-                self.target(),
-                &Params {
-                    position_millis,
-                    item_id,
-                },
-            )
-            .await
+        self.command(
+            NAMESPACE,
+            "seek",
+            &Params {
+                position_millis,
+                item_id,
+            },
+        )
+        .await
     }
 
     /// Seek forward (positive) or backward (negative) relative to the current position.
@@ -74,17 +71,15 @@ impl GroupHandle {
             item_id: Option<&'a str>,
         }
 
-        self.conn
-            .command(
-                NAMESPACE,
-                "seekRelative",
-                self.target(),
-                &Params {
-                    delta_millis,
-                    item_id,
-                },
-            )
-            .await
+        self.command(
+            NAMESPACE,
+            "seekRelative",
+            &Params {
+                delta_millis,
+                item_id,
+            },
+        )
+        .await
     }
 
     /// Change some of the play modes. Modes left as `None` are unchanged.
@@ -95,13 +90,7 @@ impl GroupHandle {
             play_modes: &'a PlayModesUpdate,
         }
 
-        self.conn
-            .command(
-                NAMESPACE,
-                "setPlayModes",
-                self.target(),
-                &Params { play_modes },
-            )
+        self.command(NAMESPACE, "setPlayModes", &Params { play_modes })
             .await
     }
 
@@ -119,23 +108,19 @@ impl GroupHandle {
             play_on_completion: bool,
         }
 
-        self.conn
-            .command(
-                NAMESPACE,
-                "loadLineIn",
-                self.target(),
-                &Params {
-                    device_id,
-                    play_on_completion,
-                },
-            )
-            .await
+        self.command(
+            NAMESPACE,
+            "loadLineIn",
+            &Params {
+                device_id,
+                play_on_completion,
+            },
+        )
+        .await
     }
 
     async fn playback_command(&self, command: &'static str) -> Result<(), Error> {
-        self.conn
-            .command(NAMESPACE, command, self.target(), &NoParams {})
-            .await
+        self.command(NAMESPACE, command, &NoParams {}).await
     }
 }
 

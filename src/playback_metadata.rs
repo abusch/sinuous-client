@@ -9,8 +9,7 @@ const NAMESPACE: &str = "playbackMetadata";
 
 impl GroupHandle {
     pub async fn get_metadata_status(&self) -> Result<MetadataStatus, Error> {
-        self.conn
-            .request(NAMESPACE, "getMetadataStatus", self.target(), &NoParams {})
+        self.request(NAMESPACE, "getMetadataStatus", &NoParams {})
             .await
     }
 }

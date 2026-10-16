@@ -15,9 +15,7 @@ const NAMESPACE: &str = "sleepTimer";
 
 impl GroupHandle {
     pub async fn get_sleep_timer(&self) -> Result<SleepTimerStatus, Error> {
-        self.conn
-            .request(NAMESPACE, "getSleepTimer", self.target(), &NoParams {})
-            .await
+        self.request(NAMESPACE, "getSleepTimer", &NoParams {}).await
     }
 
     /// Pause playback after `duration`, replacing any timer already set.
@@ -30,27 +28,19 @@ impl GroupHandle {
             duration: String,
         }
 
-        self.conn
-            .command(
-                NAMESPACE,
-                "configureSleepTimer",
-                self.target(),
-                &Params {
-                    duration: iso_duration::format(duration),
-                },
-            )
-            .await
+        self.command(
+            NAMESPACE,
+            "configureSleepTimer",
+            &Params {
+                duration: iso_duration::format(duration),
+            },
+        )
+        .await
     }
 
     /// Cancel the sleep timer. Does nothing if none is set.
     pub async fn cancel_sleep_timer(&self) -> Result<(), Error> {
-        self.conn
-            .command(
-                NAMESPACE,
-                "configureSleepTimer",
-                self.target(),
-                &NoParams {},
-            )
+        self.command(NAMESPACE, "configureSleepTimer", &NoParams {})
             .await
     }
 }

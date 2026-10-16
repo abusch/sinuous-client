@@ -17,13 +17,8 @@ impl Connection {
     /// Players only keep the last few dozen. Content played from elsewhere, e.g. from the Spotify
     /// app (Spotify Connect), doesn't seem to be recorded.
     pub async fn get_history(&self) -> Result<History, Error> {
-        self.request(
-            NAMESPACE,
-            "getHistory",
-            self.household_target(),
-            &NoParams {},
-        )
-        .await
+        self.household_request(NAMESPACE, "getHistory", &NoParams {})
+            .await
     }
 }
 

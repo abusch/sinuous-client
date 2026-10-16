@@ -15,13 +15,8 @@ const NAMESPACE: &str = "groups";
 impl Connection {
     /// Get the groups and players in the household.
     pub async fn get_groups(&self) -> Result<Groups, Error> {
-        self.request(
-            NAMESPACE,
-            "getGroups",
-            self.household_target(),
-            &NoParams {},
-        )
-        .await
+        self.household_request(NAMESPACE, "getGroups", &NoParams {})
+            .await
     }
 
     /// Create a new group from the given players. The first player becomes its coordinator.
@@ -37,12 +32,7 @@ impl Connection {
         }
 
         let info: GroupInfo = self
-            .request(
-                NAMESPACE,
-                "createGroup",
-                self.household_target(),
-                &Params { player_ids },
-            )
+            .household_request(NAMESPACE, "createGroup", &Params { player_ids })
             .await?;
         Ok(info.group)
     }
@@ -63,11 +53,9 @@ impl GroupHandle {
         }
 
         let info: GroupInfo = self
-            .conn
             .request(
                 NAMESPACE,
                 "modifyGroupMembers",
-                self.target(),
                 &Params {
                     player_ids_to_add,
                     player_ids_to_remove,
@@ -86,13 +74,7 @@ impl GroupHandle {
         }
 
         let info: GroupInfo = self
-            .conn
-            .request(
-                NAMESPACE,
-                "setGroupMembers",
-                self.target(),
-                &Params { player_ids },
-            )
+            .request(NAMESPACE, "setGroupMembers", &Params { player_ids })
             .await?;
         Ok(info.group)
     }

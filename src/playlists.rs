@@ -11,13 +11,8 @@ const NAMESPACE: &str = "playlists";
 impl Connection {
     /// Get the household's Sonos playlists.
     pub async fn get_playlists(&self) -> Result<PlaylistsList, Error> {
-        self.request(
-            NAMESPACE,
-            "getPlaylists",
-            self.household_target(),
-            &NoParams {},
-        )
-        .await
+        self.household_request(NAMESPACE, "getPlaylists", &NoParams {})
+            .await
     }
 
     /// Get a playlist, including its tracks.
@@ -28,13 +23,8 @@ impl Connection {
             playlist_id: &'a PlaylistId,
         }
 
-        self.request(
-            NAMESPACE,
-            "getPlaylist",
-            self.household_target(),
-            &Params { playlist_id },
-        )
-        .await
+        self.household_request(NAMESPACE, "getPlaylist", &Params { playlist_id })
+            .await
     }
 }
 
@@ -53,17 +43,15 @@ impl GroupHandle {
             options: &'a LoadOptions,
         }
 
-        self.conn
-            .command(
-                NAMESPACE,
-                "loadPlaylist",
-                self.target(),
-                &Params {
-                    playlist_id,
-                    options,
-                },
-            )
-            .await
+        self.command(
+            NAMESPACE,
+            "loadPlaylist",
+            &Params {
+                playlist_id,
+                options,
+            },
+        )
+        .await
     }
 }
 

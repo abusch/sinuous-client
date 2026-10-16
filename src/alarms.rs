@@ -16,13 +16,8 @@ const NAMESPACE: &str = "alarms";
 impl Connection {
     /// Get the household's alarms.
     pub async fn get_alarms(&self) -> Result<AlarmList, Error> {
-        self.request(
-            NAMESPACE,
-            "getAlarms",
-            self.household_target(),
-            &NoParams {},
-        )
-        .await
+        self.household_request(NAMESPACE, "getAlarms", &NoParams {})
+            .await
     }
 }
 

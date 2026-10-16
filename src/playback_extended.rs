@@ -16,13 +16,7 @@ const NAMESPACE: &str = "playbackExtended";
 impl GroupHandle {
     /// Get the group's playback status and metadata at once.
     pub async fn get_extended_playback_status(&self) -> Result<ExtendedPlaybackStatus, Error> {
-        self.conn
-            .request(
-                NAMESPACE,
-                "getExtendedPlaybackStatus",
-                self.target(),
-                &NoParams {},
-            )
+        self.request(NAMESPACE, "getExtendedPlaybackStatus", &NoParams {})
             .await
     }
 }
