@@ -297,6 +297,17 @@ impl Connection {
         Target::Household(&self.inner.household_id)
     }
 
+    /// Send a household command and decode its response as `T`.
+    pub(crate) async fn household_request<T: DeserializeOwned>(
+        &self,
+        namespace: &'static str,
+        command: &'static str,
+        params: &impl Serialize,
+    ) -> Result<T, Error> {
+        self.request(namespace, command, self.household_target(), params)
+            .await
+    }
+
     /// Send a command and decode its response as `T`.
     pub(crate) async fn request<T: DeserializeOwned>(
         &self,
@@ -316,8 +327,7 @@ impl Connection {
             cmd_id: &cmd_id,
             target: Some(target),
         };
-        let text = protocol::encode_request(&header, params)
-            .map_err(|source| ProtocolError::Body { command, source })?;
+        let text = protocol::encode_request(&header, params)?;
 
         let (tx, rx) = oneshot::channel();
         self.inner.pending.insert(cmd_id.clone(), tx)?;
@@ -389,11 +399,7 @@ async fn fetch_household_id(ws: &mut WsStream) -> Result<HouseholdId, Error> {
         cmd_id: HOUSEHOLD_CMD_ID,
         target: None,
     };
-    let text =
-        protocol::encode_request(&header, &NoParams {}).map_err(|source| ProtocolError::Body {
-            command: header.command,
-            source,
-        })?;
+    let text = protocol::encode_request(&header, &NoParams {})?;
     ws.send(Message::text(text))
         .await
         .map_err(|e| Error::Connect(Box::new(e)))?;
@@ -429,6 +435,30 @@ impl GroupHandle {
     pub(crate) fn target(&self) -> Target<'_> {
         Target::Group(&self.id)
     }
+
+    /// Send a command to this group and decode its response as `T`.
+    pub(crate) async fn request<T: DeserializeOwned>(
+        &self,
+        namespace: &'static str,
+        command: &'static str,
+        params: &impl Serialize,
+    ) -> Result<T, Error> {
+        self.conn
+            .request(namespace, command, self.target(), params)
+            .await
+    }
+
+    /// Send a command to this group whose response carries no data.
+    pub(crate) async fn command(
+        &self,
+        namespace: &'static str,
+        command: &'static str,
+        params: &impl Serialize,
+    ) -> Result<(), Error> {
+        self.conn
+            .command(namespace, command, self.target(), params)
+            .await
+    }
 }
 
 /// Commands targeting a single player. Obtained with [`Connection::player`].
@@ -445,6 +475,18 @@ impl PlayerHandle {
 
     pub(crate) fn target(&self) -> Target<'_> {
         Target::Player(&self.id)
+    }
+
+    /// Send a command to this player and decode its response as `T`.
+    pub(crate) async fn request<T: DeserializeOwned>(
+        &self,
+        namespace: &'static str,
+        command: &'static str,
+        params: &impl Serialize,
+    ) -> Result<T, Error> {
+        self.conn
+            .request(namespace, command, self.target(), params)
+            .await
     }
 }
 

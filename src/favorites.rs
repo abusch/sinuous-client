@@ -14,13 +14,8 @@ const NAMESPACE: &str = "favorites";
 impl Connection {
     /// Get the household's Sonos favorites.
     pub async fn get_favorites(&self) -> Result<FavoritesList, Error> {
-        self.request(
-            NAMESPACE,
-            "getFavorites",
-            self.household_target(),
-            &NoParams {},
-        )
-        .await
+        self.household_request(NAMESPACE, "getFavorites", &NoParams {})
+            .await
     }
 }
 
@@ -39,17 +34,15 @@ impl GroupHandle {
             options: &'a LoadOptions,
         }
 
-        self.conn
-            .command(
-                NAMESPACE,
-                "loadFavorite",
-                self.target(),
-                &Params {
-                    favorite_id,
-                    options,
-                },
-            )
-            .await
+        self.command(
+            NAMESPACE,
+            "loadFavorite",
+            &Params {
+                favorite_id,
+                options,
+            },
+        )
+        .await
     }
 }
 

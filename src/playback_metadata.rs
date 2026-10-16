@@ -3,14 +3,16 @@
 use serde::Deserialize;
 use url::Url;
 
-use crate::{Error, GroupHandle, protocol::NoParams};
+use crate::{
+    Error, GroupHandle,
+    protocol::{NoParams, true_bool},
+};
 
 const NAMESPACE: &str = "playbackMetadata";
 
 impl GroupHandle {
     pub async fn get_metadata_status(&self) -> Result<MetadataStatus, Error> {
-        self.conn
-            .request(NAMESPACE, "getMetadataStatus", self.target(), &NoParams {})
+        self.request(NAMESPACE, "getMetadataStatus", &NoParams {})
             .await
     }
 }
@@ -81,10 +83,6 @@ impl ImageUrl {
             Err(_) => None,
         }
     }
-}
-
-fn true_bool() -> bool {
-    true
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Deserialize)]

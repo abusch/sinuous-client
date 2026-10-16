@@ -8,9 +8,7 @@ const NAMESPACE: &str = "homeTheater";
 
 impl PlayerHandle {
     pub async fn get_home_theater_options(&self) -> Result<HomeTheaterOptions, Error> {
-        self.conn
-            .request(NAMESPACE, "getOptions", self.target(), &NoParams {})
-            .await
+        self.request(NAMESPACE, "getOptions", &NoParams {}).await
     }
 }
 

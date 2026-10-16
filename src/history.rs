@@ -5,7 +5,7 @@ use serde::Deserialize;
 use crate::{
     Connection, Error,
     playback_metadata::{ImageUrl, UniversalMusicObjectId},
-    protocol::NoParams,
+    protocol::{NoParams, true_bool},
 };
 
 const NAMESPACE: &str = "history";
@@ -17,13 +17,8 @@ impl Connection {
     /// Players only keep the last few dozen. Content played from elsewhere, e.g. from the Spotify
     /// app (Spotify Connect), doesn't seem to be recorded.
     pub async fn get_history(&self) -> Result<History, Error> {
-        self.request(
-            NAMESPACE,
-            "getHistory",
-            self.household_target(),
-            &NoParams {},
-        )
-        .await
+        self.household_request(NAMESPACE, "getHistory", &NoParams {})
+            .await
     }
 }
 
@@ -80,10 +75,6 @@ pub enum ContentType {
 #[serde(tag = "_objectType", rename_all = "camelCase")]
 pub struct Image {
     pub url: ImageUrl,
-}
-
-fn true_bool() -> bool {
-    true
 }
 
 #[cfg(test)]

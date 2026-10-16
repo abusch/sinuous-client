@@ -20,8 +20,7 @@ impl PlayerHandle {
     /// Players without a battery reject this with an [`Error::Api`] whose code is
     /// `ERROR_UNSUPPORTED_COMMAND`.
     pub async fn get_battery_status(&self) -> Result<BatteryStatus, Error> {
-        self.conn
-            .request(NAMESPACE, "getBatteryStatus", self.target(), &NoParams {})
+        self.request(NAMESPACE, "getBatteryStatus", &NoParams {})
             .await
     }
 }
