@@ -14,7 +14,8 @@ websocket API the players expose. It's the library behind
 ## Features
 
 - Find players on the network (SSDP)
-- Control groups, playback, volume, favorites, playlists and home theater settings
+- Control groups, playback, volume, sleep timers, favorites, playlists and home theater
+  settings
 - Receive events, e.g. when playback or volume changes
 - Send each command to the player that accepts it: group commands only work on the group's
   coordinator, and player commands on the player itself

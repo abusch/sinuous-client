@@ -336,7 +336,8 @@ impl Household {
             }
             Subscription::Playback(id)
             | Subscription::PlaybackMetadata(id)
-            | Subscription::GroupVolume(id) => self.coordinator_url(id),
+            | Subscription::GroupVolume(id)
+            | Subscription::SleepTimer(id) => self.coordinator_url(id),
             Subscription::PlayerVolume(id) | Subscription::HomeTheater(id) => self.player_url(id),
         }
     }
