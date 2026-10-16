@@ -7,7 +7,7 @@ use tracing::warn;
 use crate::{
     Connection, Error, GroupId, HouseholdId, PlayerId,
     groups::{GroupCoordinatorChanged, Groups},
-    hardware_status::BatteryStatus,
+    hardware_status::{BatteryStatus, WirelessNetworkStatus},
     home_theater::HomeTheaterOptions,
     playback::{PlaybackError, PlaybackStatus},
     playback_extended::ExtendedPlaybackStatus,
@@ -47,6 +47,7 @@ pub enum EventPayload {
     HomeTheaterOptions(HomeTheaterOptions),
     SleepTimerStatus(SleepTimerStatus),
     BatteryStatus(BatteryStatus),
+    WirelessNetworkStatus(WirelessNetworkStatus),
     /// The favorites, playlists, history or alarms (see [`Event::namespace`]) have changed.
     VersionChanged(VersionChanged),
     GroupCoordinatorChanged(GroupCoordinatorChanged),
@@ -70,6 +71,7 @@ impl EventPayload {
             "homeTheaterOptions" => decode(body, Self::HomeTheaterOptions),
             "sleepTimerStatus" => decode(body, Self::SleepTimerStatus),
             "battery" => decode(body, Self::BatteryStatus),
+            "wirelessNetworkStatus" => decode(body, Self::WirelessNetworkStatus),
             "versionChanged" => decode(body, Self::VersionChanged),
             "groupCoordinatorChanged" => decode(body, Self::GroupCoordinatorChanged),
             _ => Self::Unknown(body),
@@ -114,7 +116,8 @@ pub enum Subscription {
     SleepTimer(GroupId),
     PlayerVolume(PlayerId),
     HomeTheater(PlayerId),
-    /// Battery events from a portable player, plus Wi-Fi and Bluetooth ones.
+    /// Wi-Fi events from a player, and battery events from a portable one; see
+    /// [`crate::hardware_status`].
     HardwareStatus(PlayerId),
 }
 
