@@ -69,6 +69,7 @@ async fn main() -> anyhow::Result<()> {
         let volume = group.get_volume().await?;
         let status = group.get_playback_status().await?;
         let metadata = group.get_metadata_status().await?;
+        let sleep_timer = group.get_sleep_timer().await?;
         println!(
             "\tvolume {}{}, {:?} at {:?}ms",
             volume.volume,
@@ -76,6 +77,9 @@ async fn main() -> anyhow::Result<()> {
             status.playback_state,
             status.position_millis,
         );
+        if let Some(remaining) = sleep_timer.remaining {
+            println!("\tsleep timer: {}s left", remaining.as_secs());
+        }
         if let Some(track) = metadata.current_item.map(|item| item.track) {
             println!(
                 "\tcurrent track: {} - {}",

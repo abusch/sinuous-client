@@ -60,6 +60,7 @@ pub mod playback;
 pub mod playback_metadata;
 pub mod playlists;
 mod protocol;
+pub mod sleep_timer;
 #[cfg(test)]
 mod test_support;
 mod tls;

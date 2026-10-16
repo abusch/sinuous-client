@@ -11,6 +11,7 @@ use crate::{
     playback::{PlaybackError, PlaybackStatus},
     playback_metadata::MetadataStatus,
     protocol::{NoParams, Target, object_type},
+    sleep_timer::SleepTimerStatus,
     volume::Volume,
 };
 
@@ -41,6 +42,7 @@ pub enum EventPayload {
     GroupVolume(Volume),
     PlayerVolume(Volume),
     HomeTheaterOptions(HomeTheaterOptions),
+    SleepTimerStatus(SleepTimerStatus),
     /// The favorites or playlists (see [`Event::namespace`]) have changed.
     VersionChanged(VersionChanged),
     GroupCoordinatorChanged(GroupCoordinatorChanged),
@@ -61,6 +63,7 @@ impl EventPayload {
             "groupVolume" => decode(body, Self::GroupVolume),
             "playerVolume" => decode(body, Self::PlayerVolume),
             "homeTheaterOptions" => decode(body, Self::HomeTheaterOptions),
+            "sleepTimerStatus" => decode(body, Self::SleepTimerStatus),
             "versionChanged" => decode(body, Self::VersionChanged),
             "groupCoordinatorChanged" => decode(body, Self::GroupCoordinatorChanged),
             _ => Self::Unknown(body),
@@ -98,6 +101,7 @@ pub enum Subscription {
     Playback(GroupId),
     PlaybackMetadata(GroupId),
     GroupVolume(GroupId),
+    SleepTimer(GroupId),
     PlayerVolume(PlayerId),
     HomeTheater(PlayerId),
 }
@@ -111,6 +115,7 @@ impl Subscription {
             Self::Playback(_) => "playback",
             Self::PlaybackMetadata(_) => "playbackMetadata",
             Self::GroupVolume(_) => "groupVolume",
+            Self::SleepTimer(_) => "sleepTimer",
             Self::PlayerVolume(_) => "playerVolume",
             Self::HomeTheater(_) => "homeTheater",
         }
@@ -119,7 +124,10 @@ impl Subscription {
     /// The group of a group-scoped subscription.
     pub(crate) fn group_id(&self) -> Option<&GroupId> {
         match self {
-            Self::Playback(id) | Self::PlaybackMetadata(id) | Self::GroupVolume(id) => Some(id),
+            Self::Playback(id)
+            | Self::PlaybackMetadata(id)
+            | Self::GroupVolume(id)
+            | Self::SleepTimer(id) => Some(id),
             _ => None,
         }
     }
@@ -127,9 +135,10 @@ impl Subscription {
     fn target<'a>(&'a self, conn: &'a Connection) -> Target<'a> {
         match self {
             Self::Groups | Self::Favorites | Self::Playlists => conn.household_target(),
-            Self::Playback(id) | Self::PlaybackMetadata(id) | Self::GroupVolume(id) => {
-                Target::Group(id)
-            }
+            Self::Playback(id)
+            | Self::PlaybackMetadata(id)
+            | Self::GroupVolume(id)
+            | Self::SleepTimer(id) => Target::Group(id),
             Self::PlayerVolume(id) | Self::HomeTheater(id) => Target::Player(id),
         }
     }
@@ -189,5 +198,14 @@ mod tests {
             panic!("expected version changed");
         };
         assert_eq!(changed.version, "RINCON_5:19");
+    }
+
+    #[test]
+    fn decodes_sleep_timer_status() {
+        let body = json!({"_objectType": "sleepTimerStatus", "remainingTimeDuration": "PT1H0M0S", "active": true});
+        let EventPayload::SleepTimerStatus(status) = EventPayload::from_body(body) else {
+            panic!("expected sleep timer status");
+        };
+        assert_eq!(status.remaining, Some(std::time::Duration::from_secs(3600)));
     }
 }
