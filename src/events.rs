@@ -140,33 +140,47 @@ impl Subscription {
         }
     }
 
-    /// The group of a group-scoped subscription.
-    pub(crate) fn group_id(&self) -> Option<&GroupId> {
+    /// What the subscription applies to.
+    pub(crate) fn scope(&self) -> Scope<'_> {
         match self {
+            Self::Groups | Self::Favorites | Self::Playlists | Self::History | Self::Alarms => {
+                Scope::Household
+            }
             Self::Playback(id)
             | Self::PlaybackMetadata(id)
             | Self::PlaybackExtended(id)
             | Self::GroupVolume(id)
-            | Self::SleepTimer(id) => Some(id),
-            _ => None,
+            | Self::SleepTimer(id) => Scope::Group(id),
+            Self::PlayerVolume(id) | Self::HomeTheater(id) | Self::HardwareStatus(id) => {
+                Scope::Player(id)
+            }
+        }
+    }
+
+    /// The group of a group-scoped subscription.
+    pub(crate) fn group_id(&self) -> Option<&GroupId> {
+        match self.scope() {
+            Scope::Group(id) => Some(id),
+            Scope::Household | Scope::Player(_) => None,
         }
     }
 
     fn target<'a>(&'a self, conn: &'a Connection) -> Target<'a> {
-        match self {
-            Self::Groups | Self::Favorites | Self::Playlists | Self::History | Self::Alarms => {
-                conn.household_target()
-            }
-            Self::Playback(id)
-            | Self::PlaybackMetadata(id)
-            | Self::PlaybackExtended(id)
-            | Self::GroupVolume(id)
-            | Self::SleepTimer(id) => Target::Group(id),
-            Self::PlayerVolume(id) | Self::HomeTheater(id) | Self::HardwareStatus(id) => {
-                Target::Player(id)
-            }
+        match self.scope() {
+            Scope::Household => conn.household_target(),
+            Scope::Group(id) => Target::Group(id),
+            Scope::Player(id) => Target::Player(id),
         }
     }
+}
+
+/// What a [`Subscription`] applies to.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum Scope<'a> {
+    /// The household of the connection it's sent on.
+    Household,
+    Group(&'a GroupId),
+    Player(&'a PlayerId),
 }
 
 impl Connection {

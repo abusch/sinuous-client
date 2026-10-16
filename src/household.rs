@@ -15,6 +15,7 @@ use crate::{
     ConnectOptions, Connection, Error, Event, EventPayload, GroupHandle, GroupId, HouseholdId,
     PlayerHandle, PlayerId, Subscription,
     connection::lock,
+    events::Scope,
     groups::{Group, GroupStatus, Groups, Player},
 };
 
@@ -355,20 +356,10 @@ impl Household {
 
     /// The websocket URL of the player that accepts `subscription`.
     fn route(&self, subscription: &Subscription) -> Result<Url, Error> {
-        match subscription {
-            Subscription::Groups
-            | Subscription::Favorites
-            | Subscription::Playlists
-            | Subscription::History
-            | Subscription::Alarms => Ok(self.inner.primary_url.clone()),
-            Subscription::Playback(id)
-            | Subscription::PlaybackMetadata(id)
-            | Subscription::PlaybackExtended(id)
-            | Subscription::GroupVolume(id)
-            | Subscription::SleepTimer(id) => self.coordinator_url(id),
-            Subscription::PlayerVolume(id)
-            | Subscription::HomeTheater(id)
-            | Subscription::HardwareStatus(id) => self.player_url(id),
+        match subscription.scope() {
+            Scope::Household => Ok(self.inner.primary_url.clone()),
+            Scope::Group(id) => self.coordinator_url(id),
+            Scope::Player(id) => self.player_url(id),
         }
     }
 
@@ -703,13 +694,10 @@ async fn restore(household: Weak<Inner>, mut subscriptions: Vec<Subscription>) {
     let mut closed = inner.closed.subscribe();
     drop(inner);
     // `Groups` first, so that the topology used to route the others is up to date.
-    subscriptions.sort_by_key(|subscription| match subscription {
-        Subscription::Groups => 0,
-        Subscription::Favorites
-        | Subscription::Playlists
-        | Subscription::History
-        | Subscription::Alarms => 1,
-        _ => 2,
+    subscriptions.sort_by_key(|subscription| match subscription.scope() {
+        _ if *subscription == Subscription::Groups => 0,
+        Scope::Household => 1,
+        Scope::Group(_) | Scope::Player(_) => 2,
     });
 
     let mut delay = RECONNECT_MIN_DELAY;
