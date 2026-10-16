@@ -10,6 +10,7 @@ use crate::{
     hardware_status::BatteryStatus,
     home_theater::HomeTheaterOptions,
     playback::{PlaybackError, PlaybackStatus},
+    playback_extended::ExtendedPlaybackStatus,
     playback_metadata::MetadataStatus,
     protocol::{NoParams, Target, object_type},
     sleep_timer::SleepTimerStatus,
@@ -38,6 +39,7 @@ pub struct Event {
 pub enum EventPayload {
     Groups(Groups),
     PlaybackStatus(PlaybackStatus),
+    ExtendedPlaybackStatus(ExtendedPlaybackStatus),
     PlaybackError(PlaybackError),
     MetadataStatus(MetadataStatus),
     GroupVolume(Volume),
@@ -60,6 +62,7 @@ impl EventPayload {
         match ty {
             "groups" => decode(body, Self::Groups),
             "playbackStatus" => decode(body, Self::PlaybackStatus),
+            "extendedPlaybackStatus" => decode(body, Self::ExtendedPlaybackStatus),
             "playbackError" => decode(body, Self::PlaybackError),
             "metadataStatus" => decode(body, Self::MetadataStatus),
             "groupVolume" => decode(body, Self::GroupVolume),
@@ -105,6 +108,8 @@ pub enum Subscription {
     Alarms,
     Playback(GroupId),
     PlaybackMetadata(GroupId),
+    /// Playback status and metadata together; see [`crate::playback_extended`].
+    PlaybackExtended(GroupId),
     GroupVolume(GroupId),
     SleepTimer(GroupId),
     PlayerVolume(PlayerId),
@@ -123,6 +128,7 @@ impl Subscription {
             Self::Alarms => "alarms",
             Self::Playback(_) => "playback",
             Self::PlaybackMetadata(_) => "playbackMetadata",
+            Self::PlaybackExtended(_) => "playbackExtended",
             Self::GroupVolume(_) => "groupVolume",
             Self::SleepTimer(_) => "sleepTimer",
             Self::PlayerVolume(_) => "playerVolume",
@@ -136,6 +142,7 @@ impl Subscription {
         match self {
             Self::Playback(id)
             | Self::PlaybackMetadata(id)
+            | Self::PlaybackExtended(id)
             | Self::GroupVolume(id)
             | Self::SleepTimer(id) => Some(id),
             _ => None,
@@ -149,6 +156,7 @@ impl Subscription {
             }
             Self::Playback(id)
             | Self::PlaybackMetadata(id)
+            | Self::PlaybackExtended(id)
             | Self::GroupVolume(id)
             | Self::SleepTimer(id) => Target::Group(id),
             Self::PlayerVolume(id) | Self::HomeTheater(id) | Self::HardwareStatus(id) => {

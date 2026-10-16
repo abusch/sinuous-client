@@ -143,7 +143,7 @@ async fn main() -> anyhow::Result<()> {
     let mut events = household.events();
     for g in &topology.groups {
         household
-            .subscribe(&Subscription::Playback(g.id.clone()))
+            .subscribe(&Subscription::PlaybackExtended(g.id.clone()))
             .await?;
         household
             .subscribe(&Subscription::GroupVolume(g.id.clone()))
@@ -157,7 +157,14 @@ async fn main() -> anyhow::Result<()> {
                 .and_then(|id| topology.groups.get(id))
                 .map(|g| g.name.as_str());
             let summary = match &event.payload {
-                EventPayload::PlaybackStatus(s) => format!("{:?}", s.playback_state),
+                EventPayload::ExtendedPlaybackStatus(s) => {
+                    let track = s.metadata.current_item.as_ref().map(|item| &item.track);
+                    format!(
+                        "{:?}, {:?}",
+                        s.playback.playback_state,
+                        track.and_then(|t| t.name.as_deref())
+                    )
+                }
                 EventPayload::GroupVolume(v) => format!("volume {}", v.volume),
                 other => format!("{other:?}"),
             };

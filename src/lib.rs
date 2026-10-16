@@ -67,6 +67,7 @@ mod household;
 mod ids;
 mod iso_duration;
 pub mod playback;
+pub mod playback_extended;
 pub mod playback_metadata;
 pub mod playlists;
 mod protocol;
