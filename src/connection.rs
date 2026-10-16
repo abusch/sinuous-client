@@ -234,6 +234,11 @@ impl Connection {
         &self.inner.websocket_url
     }
 
+    #[cfg(feature = "upnp")]
+    pub(crate) fn request_timeout(&self) -> Duration {
+        self.inner.request_timeout
+    }
+
     /// Whether the websocket has been closed, by either side.
     pub fn is_closed(&self) -> bool {
         *self.inner.pending.closed.borrow()

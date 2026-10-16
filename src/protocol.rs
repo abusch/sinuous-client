@@ -85,6 +85,9 @@ pub(crate) enum ProtocolError {
     MissingHousehold,
     #[error("command failed with unexpected response {0}")]
     UnexpectedFailure(Value),
+    #[cfg(feature = "upnp")]
+    #[error("failed to decode UPnP response")]
+    Upnp(#[source] crate::upnp::UpnpError),
     #[error("failed to decode response to `{command}`")]
     Body {
         command: &'static str,

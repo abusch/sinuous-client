@@ -61,7 +61,7 @@ pub struct UniversalMusicObjectId {
 /// a URL that can be fetched.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize)]
 #[serde(transparent)]
-pub struct ImageUrl(String);
+pub struct ImageUrl(pub(crate) String);
 
 impl ImageUrl {
     pub fn as_str(&self) -> &str {
