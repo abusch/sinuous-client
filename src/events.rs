@@ -43,7 +43,7 @@ pub enum EventPayload {
     PlayerVolume(Volume),
     HomeTheaterOptions(HomeTheaterOptions),
     SleepTimerStatus(SleepTimerStatus),
-    /// The favorites or playlists (see [`Event::namespace`]) have changed.
+    /// The favorites, playlists or history (see [`Event::namespace`]) have changed.
     VersionChanged(VersionChanged),
     GroupCoordinatorChanged(GroupCoordinatorChanged),
     /// An event this crate doesn't know how to decode (yet). Contains the raw body.
@@ -98,6 +98,7 @@ pub enum Subscription {
     Groups,
     Favorites,
     Playlists,
+    History,
     Playback(GroupId),
     PlaybackMetadata(GroupId),
     GroupVolume(GroupId),
@@ -112,6 +113,7 @@ impl Subscription {
             Self::Groups => "groups",
             Self::Favorites => "favorites",
             Self::Playlists => "playlists",
+            Self::History => "history",
             Self::Playback(_) => "playback",
             Self::PlaybackMetadata(_) => "playbackMetadata",
             Self::GroupVolume(_) => "groupVolume",
@@ -134,7 +136,9 @@ impl Subscription {
 
     fn target<'a>(&'a self, conn: &'a Connection) -> Target<'a> {
         match self {
-            Self::Groups | Self::Favorites | Self::Playlists => conn.household_target(),
+            Self::Groups | Self::Favorites | Self::Playlists | Self::History => {
+                conn.household_target()
+            }
             Self::Playback(id)
             | Self::PlaybackMetadata(id)
             | Self::GroupVolume(id)
