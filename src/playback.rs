@@ -2,7 +2,10 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::{Error, GroupHandle, PlayerId, protocol::NoParams};
+use crate::{
+    Error, GroupHandle, PlayerId, history::ContentType, playback_metadata::UniversalMusicObjectId,
+    protocol::NoParams,
+};
 
 const NAMESPACE: &str = "playback";
 
@@ -143,6 +146,60 @@ impl GroupHandle {
         .await
     }
 
+    /// Load content from a music service into the group, given its id and type, e.g. those of a
+    /// [`HistoryItem`](crate::history::HistoryItem).
+    ///
+    /// Unlike [`GroupHandle::load_favorite`], this replaces the queue unless
+    /// [`LoadOptions::action`] says otherwise. [`ContentType::Unknown`] can't be loaded, as the
+    /// actual type isn't known.
+    pub async fn load_content(
+        &self,
+        id: &UniversalMusicObjectId,
+        content_type: ContentType,
+        options: &LoadOptions,
+    ) -> Result<(), Error> {
+        /// [`UniversalMusicObjectId`] without its `_objectType`.
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Id<'a> {
+            object_id: &'a str,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            service_id: Option<&'a str>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            account_id: Option<&'a str>,
+        }
+
+        // Not the names `loadFavorite` and `loadPlaylist` use for the same options.
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Params<'a> {
+            id: Id<'a>,
+            r#type: ContentType,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            queue_action: Option<LoadAction>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            playback_action: Option<&'static str>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            play_modes: Option<PlayModesUpdate>,
+        }
+
+        let params = Params {
+            id: Id {
+                object_id: &id.object_id,
+                service_id: id.service_id.as_deref(),
+                account_id: id.account_id.as_deref(),
+            },
+            r#type: content_type,
+            queue_action: options.action,
+            playback_action: options
+                .play_on_completion
+                .unwrap_or(false)
+                .then_some("PLAY"),
+            play_modes: options.play_modes,
+        };
+        self.command(NAMESPACE, "loadContent", &params).await
+    }
+
     async fn playback_command(&self, command: &'static str) -> Result<(), Error> {
         self.command(NAMESPACE, command, &NoParams {}).await
     }
@@ -232,13 +289,21 @@ pub struct PlaybackError {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum LoadAction {
+    /// Replace the queue with the content, and go to its first track.
     Replace,
+    /// Add the content at the end of the queue.
     Append,
+    /// Add the content at the end of the queue, and go to its first track.
     Insert,
+    /// Add the content right after the current track.
     InsertNext,
 }
 
-/// Options for loading content (favorites, playlists) into a group.
+/// Options for loading content (favorites, playlists, [content by id](GroupHandle::load_content))
+/// into a group.
+///
+/// When `action` is `None`, favorites and playlists are appended to the queue, but content by id
+/// replaces it.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LoadOptions {
@@ -289,6 +354,72 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(*bodies.lock().unwrap(), [json!({"trackNumber": 3})]);
+    }
+
+    #[tokio::test]
+    async fn loads_content() {
+        let bodies = Arc::new(Mutex::new(Vec::new()));
+        let (addr, _) = fake_player({
+            let bodies = bodies.clone();
+            move |header, body| {
+                assert_eq!(header["namespace"], "playback");
+                assert_eq!(header["command"], "loadContent");
+                bodies.lock().unwrap().push(body.clone());
+                Some(reply(header, true, json!({})))
+            }
+        })
+        .await;
+        let options = ConnectOptions::default()
+            .request_timeout(Duration::from_millis(500))
+            .household_id(HouseholdId::new("Sonos_1"));
+        let conn = Connection::connect_to(&url(addr), options).await.unwrap();
+        let group = conn.group(&GroupId::new("RINCON_1:42"));
+        let album = UniversalMusicObjectId {
+            service_id: Some("12".into()),
+            object_id: "spotify:album:1au1XG2AdakLtj9TPPNoSc".into(),
+            account_id: Some("sn_77".into()),
+        };
+        group
+            .load_content(&album, ContentType::Album, &LoadOptions::default())
+            .await
+            .unwrap();
+        let sonos_playlist = UniversalMusicObjectId {
+            service_id: Some("65435".into()),
+            object_id: "0".into(),
+            account_id: None,
+        };
+        let options = LoadOptions {
+            action: Some(LoadAction::InsertNext),
+            play_on_completion: Some(true),
+            play_modes: Some(PlayModesUpdate {
+                repeat: Some(true),
+                ..Default::default()
+            }),
+        };
+        group
+            .load_content(&sonos_playlist, ContentType::Playlist, &options)
+            .await
+            .unwrap();
+        assert_eq!(
+            *bodies.lock().unwrap(),
+            [
+                json!({
+                    "id": {
+                        "objectId": "spotify:album:1au1XG2AdakLtj9TPPNoSc",
+                        "serviceId": "12",
+                        "accountId": "sn_77"
+                    },
+                    "type": "album"
+                }),
+                json!({
+                    "id": {"objectId": "0", "serviceId": "65435"},
+                    "type": "playlist",
+                    "queueAction": "INSERT_NEXT",
+                    "playbackAction": "PLAY",
+                    "playModes": {"repeat": true}
+                }),
+            ]
+        );
     }
 
     #[test]
