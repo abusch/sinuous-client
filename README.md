@@ -16,7 +16,7 @@ websocket API the players expose. It's the library behind
 - Find players on the network (SSDP)
 - Control groups, playback, volume, sleep timers, favorites, playlists and home theater
   settings
-- List what the household played recently
+- List what the household played recently, and play it again
 - Read the battery of portable players, and follow players' Wi-Fi connection
 - List the household's alarms
 - Read a group's queue (with the `upnp` feature), and skip to any track in it

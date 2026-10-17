@@ -1,6 +1,6 @@
 //! The `history` namespace: what the household played recently.
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     Connection, Error,
@@ -57,7 +57,9 @@ pub struct HistoryItem {
     pub images: Vec<Image>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+/// What kind of content something is, e.g. for
+/// [`GroupHandle::load_content`](crate::GroupHandle::load_content).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ContentType {
     Album,
