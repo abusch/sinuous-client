@@ -31,8 +31,20 @@ impl GroupHandle {
         self.playback_command("skipToNextTrack").await
     }
 
+    /// Skip to the previous track, even when well into the current one.
+    ///
+    /// See [`GroupHandle::skip_back`] for a "back" button.
     pub async fn skip_to_previous_track(&self) -> Result<(), Error> {
         self.playback_command("skipToPreviousTrack").await
+    }
+
+    /// Restart the current track, or skip to the previous one within the first few seconds (3 to
+    /// 4) of the current track: what a "back" button does.
+    ///
+    /// Like [`GroupHandle::skip_to_next_track`], this doesn't start playback. On the first track,
+    /// it restarts it even though [`PlaybackActions::can_skip_back`] is false.
+    pub async fn skip_back(&self) -> Result<(), Error> {
+        self.playback_command("skipBack").await
     }
 
     /// Skip to the track at `track_number` in the group's queue, from 1.
