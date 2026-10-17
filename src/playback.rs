@@ -32,6 +32,30 @@ impl GroupHandle {
         self.playback_command("skipToPreviousTrack").await
     }
 
+    /// Skip to the track at `track_number` in the group's queue, from 1.
+    ///
+    /// Track numbers are the queue positions that `GroupHandle::get_queue` gives (with the `upnp`
+    /// feature), and the [`PlaybackStatus::item_id`] of a group playing from its queue.
+    ///
+    /// Like [`GroupHandle::skip_to_next_track`], this doesn't start playback: a playing group
+    /// plays the track from its start, a paused or idle one stays so. Skipping past the end of
+    /// the queue fails with `ERROR_PLAYBACK_NO_CONTENT`, and track 0 with
+    /// `ERROR_INVALID_PARAMETER`.
+    ///
+    /// It only works while the group plays from its queue: during a Spotify Connect session, it
+    /// succeeds but does nothing (or fails with `ERROR_DISALLOWED_BY_POLICY` when Spotify has
+    /// nothing loaded).
+    pub async fn skip_to_track(&self, track_number: u32) -> Result<(), Error> {
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Params {
+            track_number: u32,
+        }
+
+        self.command(NAMESPACE, "skipToTrack", &Params { track_number })
+            .await
+    }
+
     /// Seek to an absolute position in the current track.
     ///
     /// If `item_id` is given, the command only applies if it is still the current item.
@@ -229,7 +253,43 @@ pub struct LoadOptions {
 
 #[cfg(test)]
 mod tests {
+    use std::{
+        sync::{Arc, Mutex},
+        time::Duration,
+    };
+
+    use serde_json::json;
+
     use super::*;
+    use crate::{
+        ConnectOptions, Connection, GroupId, HouseholdId,
+        test_support::{fake_player, reply, url},
+    };
+
+    #[tokio::test]
+    async fn skips_to_a_track() {
+        let bodies = Arc::new(Mutex::new(Vec::new()));
+        let (addr, _) = fake_player({
+            let bodies = bodies.clone();
+            move |header, body| {
+                assert_eq!(header["namespace"], "playback");
+                assert_eq!(header["command"], "skipToTrack");
+                assert_eq!(header["groupId"], "RINCON_1:42");
+                bodies.lock().unwrap().push(body.clone());
+                Some(reply(header, true, json!({})))
+            }
+        })
+        .await;
+        let options = ConnectOptions::default()
+            .request_timeout(Duration::from_millis(500))
+            .household_id(HouseholdId::new("Sonos_1"));
+        let conn = Connection::connect_to(&url(addr), options).await.unwrap();
+        conn.group(&GroupId::new("RINCON_1:42"))
+            .skip_to_track(3)
+            .await
+            .unwrap();
+        assert_eq!(*bodies.lock().unwrap(), [json!({"trackNumber": 3})]);
+    }
 
     #[test]
     fn decodes_playback_status() {

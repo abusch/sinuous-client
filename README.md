@@ -19,7 +19,7 @@ websocket API the players expose. It's the library behind
 - List what the household played recently
 - Read the battery of portable players, and follow players' Wi-Fi connection
 - List the household's alarms
-- Read a group's queue (with the `upnp` feature)
+- Read a group's queue (with the `upnp` feature), and skip to any track in it
 - Receive events, e.g. when playback or volume changes
 - Send each command to the player that accepts it: group commands only work on the group's
   coordinator, and player commands on the player itself
