@@ -46,7 +46,7 @@ pub enum Error {
     Protocol(#[source] BoxError),
 }
 
-/// A `globalError` returned by a player when a command fails.
+/// A `globalError` (or `playbackError`) returned by a player when a command fails.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(tag = "_objectType", rename_all = "camelCase")]
 pub struct ApiError {

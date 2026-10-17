@@ -5,7 +5,7 @@
 //! * Requests carry `namespace`, `command`, `cmdId` and a target (`householdId`, `groupId` or
 //!   `playerId`) in the header; command parameters go in the body.
 //! * Replies echo `cmdId` and carry `success` in the header; the body is the response object
-//!   (or `{}` for commands that return nothing), or a `globalError` /
+//!   (or `{}` for commands that return nothing), or a `globalError`, `playbackError` or
 //!   `groupCoordinatorChanged` object when `success` is false.
 //! * Events carry `name` in the header and the event object in the body.
 
@@ -144,7 +144,7 @@ pub(crate) fn decode(text: &str) -> Result<Incoming, ProtocolError> {
 /// Convert the body of an unsuccessful reply into an [`Error`].
 fn failure(body: Value) -> Error {
     let decoded = match object_type(&body) {
-        Some("globalError") => ApiError::deserialize(&body).map(Error::Api),
+        Some("globalError" | "playbackError") => ApiError::deserialize(&body).map(Error::Api),
         Some("groupCoordinatorChanged") => GroupCoordinatorChanged::deserialize(&body)
             .map(|e| Error::GroupCoordinatorChanged(Box::new(e))),
         _ => return ProtocolError::UnexpectedFailure(body).into(),
@@ -276,6 +276,20 @@ mod tests {
             err.reason.as_deref(),
             Some("bogus command is not supported.")
         );
+    }
+
+    #[test]
+    fn decodes_playback_error() {
+        // Skipping past the end of the queue.
+        let text = r#"[{"namespace":"playback","householdId":"Sonos_1","groupId":"RINCON_1:42","response":"skipToTrack","success":false,"type":"playbackError","cmdId":"c3"},{"_objectType":"playbackError","errorCode":"ERROR_PLAYBACK_NO_CONTENT","serviceId":0}]"#;
+        let Incoming::Reply { result, .. } = decode(text).unwrap() else {
+            panic!("expected a reply");
+        };
+        let Err(Error::Api(err)) = result else {
+            panic!("expected an api error, got {result:?}");
+        };
+        assert_eq!(err.error_code, "ERROR_PLAYBACK_NO_CONTENT");
+        assert_eq!(err.reason, None);
     }
 
     #[test]
