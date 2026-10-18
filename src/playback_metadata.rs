@@ -118,7 +118,8 @@ pub struct Track {
     #[serde(default = "true_bool")]
     pub can_skip: bool,
     pub duration_millis: Option<u64>,
-    pub replay_gain: Option<i64>,
+    /// Not always a whole number, e.g. `4.0` on Sonos Radio.
+    pub replay_gain: Option<f64>,
     pub service: Option<Service>,
 }
 
@@ -180,6 +181,22 @@ mod tests {
         )
         .unwrap();
         assert!(track.image_url.unwrap().as_str().starts_with("/getaa?"));
+    }
+
+    #[test]
+    fn decodes_sonos_radio_metadata_status() {
+        // What a group playing a Sonos Radio station reported, shortened.
+        let status: MetadataStatus = serde_json::from_str(
+            r#"{"_objectType":"metadataStatus","container":{"_objectType":"container","name":"Classic Metal","type":"station","id":{"_objectType":"universalMusicObjectId","serviceId":"303","objectId":"154252","accountId":"sn_1"},"service":{"_objectType":"service","name":"Sonos Radio","id":"303","images":[]},"imageUrl":"https://sonosradio.imgix.net/station-images/3b8cca6c.png","images":[]},"currentItem":{"_objectType":"queueItem","id":"b895e999-DZR:29:middle:154252::dzrs.trk.1325467:default:SD:6","track":{"_objectType":"track","type":"track","name":"Bewitched","imageUrl":"https://sonosradio.imgix.net/station-images/7f0d1d2c.png","images":[],"artist":{"_objectType":"artist","name":"Candlemass"},"service":{"_objectType":"service","name":"Sonos Radio","id":"303","images":[]},"quality":{"_objectType":"trackQuality","bitDepth":16,"sampleRate":44100,"lossless":false,"immersive":false},"replayGain":4.0},"policies":{"_objectType":"playbackPolicy"}}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            status.container.unwrap().name.as_deref(),
+            Some("Classic Metal")
+        );
+        let track = status.current_item.unwrap().track;
+        assert_eq!(track.name.as_deref(), Some("Bewitched"));
+        assert_eq!(track.replay_gain, Some(4.0));
     }
 
     #[test]
