@@ -23,6 +23,9 @@ pub struct MetadataStatus {
     pub container: Option<Container>,
     pub current_item: Option<QueueItem>,
     pub next_item: Option<QueueItem>,
+    /// What a stream says it plays, e.g. `franceinfo-hifi.aac` for a Radio France station, which
+    /// reports no current item.
+    pub stream_info: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -197,6 +200,21 @@ mod tests {
         let track = status.current_item.unwrap().track;
         assert_eq!(track.name.as_deref(), Some("Bewitched"));
         assert_eq!(track.replay_gain, Some(4.0));
+    }
+
+    #[test]
+    fn decodes_live_stream_metadata_status() {
+        // What a Play:5 (firmware 86.10) playing a Radio France station reported, shortened.
+        let status: MetadataStatus = serde_json::from_str(
+            r#"{"_objectType":"metadataStatus","container":{"_objectType":"container","name":"franceinfo","type":"station","id":{"_objectType":"universalMusicObjectId","serviceId":"585","objectId":"station:FRANCEINFO","accountId":"sn_81"},"service":{"_objectType":"service","name":"Radio France","id":"585","images":[]},"imageUrl":"https://www.radiofrance.fr/s3/cruiser-production-eu3/2023/06/52bb749e/500x500_sc_rf_omm_l00002_ite.jpg","images":[]},"streamInfo":"franceinfo-hifi.aac"}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            status.container.unwrap().name.as_deref(),
+            Some("franceinfo")
+        );
+        assert!(status.current_item.is_none());
+        assert_eq!(status.stream_info.as_deref(), Some("franceinfo-hifi.aac"));
     }
 
     #[test]
