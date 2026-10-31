@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0](https://github.com/abusch/sinuous-client/compare/v0.4.0...v0.5.0) - 2026-10-31
+
+### Added
+
+- *(queue)* [**breaking**] tell which tracks of the queue are explicit
+- *(playback_metadata)* [**breaking**] decode the tags of tracks
+
+### Fixed
+
+- Specify minimum rustls version to address security vulnerability
+
 ## [0.4.0](https://github.com/abusch/sinuous-client/compare/v0.3.0...v0.4.0) - 2026-10-19
 
 ### Added
