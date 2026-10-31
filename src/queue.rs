@@ -25,6 +25,10 @@ const QUEUE_ID: &str = "Q:0";
 const DC_NS: &str = "http://purl.org/dc/elements/1.1/";
 const UPNP_NS: &str = "urn:schemas-upnp-org:metadata-1-0/upnp/";
 const DIDL_NS: &str = "urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/";
+/// Sonos' own metadata, e.g. `r:tags`.
+const RINCON_NS: &str = "urn:schemas-rinconnetworks-com:metadata-1-0/";
+/// The flag of `r:tags` marking explicit tracks. Tracks with no tags have no `r:tags` at all.
+const EXPLICIT_TAG: u32 = 1;
 
 impl GroupHandle {
     /// Get all the tracks in the group's queue.
@@ -93,6 +97,8 @@ pub struct QueueEntry {
     pub duration_millis: Option<u64>,
     /// The URI the player plays the track from, e.g. `x-sonos-spotify:spotify%3atrack%3a...`.
     pub uri: Option<String>,
+    /// Whether the track is tagged explicit.
+    pub explicit: bool,
 }
 
 /// How many times [`read_queue`] reads a queue that changes while it's being read.
@@ -182,6 +188,9 @@ fn parse_item(item: roxmltree::Node<'_, '_>) -> Result<QueueEntry, UpnpError> {
             .and_then(|res| res.attribute("duration"))
             .and_then(parse_duration_millis),
         uri: res.and_then(|res| res.text()).map(str::to_owned),
+        explicit: text(RINCON_NS, "tags")
+            .and_then(|tags| tags.trim().parse::<u32>().ok())
+            .is_some_and(|tags| tags & EXPLICIT_TAG != 0),
     })
 }
 
@@ -307,6 +316,7 @@ mod tests {
                 image_url: Some(ImageUrl("/getaa?s=1&u=x-sonos-spotify%3aspotify%253atrack%253a5zGEoeJ8mmWBTHh4GOgBSS%3fsid%3d12%26flags%3d8232%26sn%3d77".into())),
                 duration_millis: Some(324_000),
                 uri: Some("x-sonos-spotify:spotify%3atrack%3a5zGEoeJ8mmWBTHh4GOgBSS?sid=12&flags=8232&sn=77".into()),
+                explicit: false,
             }
         );
         assert_eq!(queue.items[1].position, 2);
@@ -431,6 +441,15 @@ mod tests {
         assert_eq!(parse_duration_millis("0:00:01.5x"), None);
         assert_eq!(parse_duration_millis("99999999999999999:00:00"), None);
         assert_eq!(parse_duration_millis(&format!("0:00:{}", u64::MAX)), None);
+    }
+
+    #[test]
+    fn parses_explicit_tracks() {
+        // From the queue of an Arc Ultra (firmware 97.2), shortened.
+        let didl = r#"<DIDL-Lite xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/" xmlns:r="urn:schemas-rinconnetworks-com:metadata-1-0/" xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/"><item id="Q:0/4" parentID="Q:0" restricted="true"><dc:title>Rein</dc:title><upnp:album>City Burials</upnp:album></item><item id="Q:0/5" parentID="Q:0" restricted="true"><dc:title>The Winter of Our Passing</dc:title><upnp:album>City Burials</upnp:album><r:tags>1</r:tags></item></DIDL-Lite>"#;
+        let entries = parse_didl(didl).unwrap();
+        assert!(!entries[0].explicit);
+        assert!(entries[1].explicit);
     }
 
     #[test]
