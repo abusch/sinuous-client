@@ -124,6 +124,10 @@ pub struct Track {
     /// Not always a whole number, e.g. `4.0` on Sonos Radio.
     pub replay_gain: Option<f64>,
     pub service: Option<Service>,
+    /// The track's own tags, e.g. [`Tag::TagExplicit`] for an explicit track on an album that
+    /// isn't tagged explicit.
+    #[serde(default)]
+    pub tags: Vec<Tag>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -200,6 +204,18 @@ mod tests {
         let track = status.current_item.unwrap().track;
         assert_eq!(track.name.as_deref(), Some("Bewitched"));
         assert_eq!(track.replay_gain, Some(4.0));
+    }
+
+    #[test]
+    fn decodes_explicit_tracks() {
+        // An explicit Spotify track on an album that isn't, as an Arc Ultra (firmware 97.2)
+        // reported it, shortened.
+        let track: Track = serde_json::from_str(
+            r#"{"_objectType":"track","type":"track","name":"The Winter of Our Passing","album":{"_objectType":"album","name":"City Burials"},"artist":{"_objectType":"artist","name":"Katatonia"},"durationMillis":198000,"tags":["TAG_EXPLICIT"],"explicit":true}"#,
+        )
+        .unwrap();
+        assert_eq!(track.tags, [Tag::TagExplicit]);
+        assert!(track.album.unwrap().tags.is_empty());
     }
 
     #[test]
